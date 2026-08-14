@@ -8,13 +8,14 @@ int main(void) {
     unsigned char blsr_carry;
 
     __asm__ volatile(
+        "cmpq $1, %%r11\n\t"
         ".global focaccia_trace_start\n"
         "focaccia_trace_start:\n\t"
         "blsiq %[source], %[result]\n\t"
         "setc %[carry]\n\t"
         : [result] "=r"(blsi_result), [carry] "=qm"(blsi_carry)
         : [source] "r"(source)
-        : "cc");
+        : "r11", "cc");
 
     __asm__ volatile(
         "blsrq %[source], %[result]\n\t"
