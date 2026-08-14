@@ -1,0 +1,456 @@
+diff --git a/accel/tcg/plugin-gen.c b/accel/tcg/plugin-gen.c
+--- a/accel/tcg/plugin-gen.c	2024-01-29 19:13:21.000000000 +0000
++++ b/accel/tcg/plugin-gen.c	2026-08-13 18:47:58.394702225 +0000
+@@ -79,6 +79,7 @@
+ 
+ enum plugin_gen_cb {
+     PLUGIN_GEN_CB_UDATA,
++    PLUGIN_GEN_CB_UDATA_R,
+     PLUGIN_GEN_CB_INLINE,
+     PLUGIN_GEN_CB_MEM,
+     PLUGIN_GEN_ENABLE_MEM_HELPER,
+@@ -90,7 +91,10 @@
+  * These helpers are stubs that get dynamically switched out for calls
+  * direct to the plugin if they are subscribed to.
+  */
+-void HELPER(plugin_vcpu_udata_cb)(uint32_t cpu_index, void *udata)
++void HELPER(plugin_vcpu_udata_cb_no_wg)(uint32_t cpu_index, void *udata)
++{ }
++
++void HELPER(plugin_vcpu_udata_cb_no_rwg)(uint32_t cpu_index, void *udata)
+ { }
+ 
+ void HELPER(plugin_vcpu_mem_cb)(unsigned int vcpu_index,
+@@ -98,7 +102,7 @@
+                                 void *userdata)
+ { }
+ 
+-static void gen_empty_udata_cb(void)
++static void gen_empty_udata_cb(void (*gen_helper)(TCGv_i32, TCGv_ptr))
+ {
+     TCGv_i32 cpu_index = tcg_temp_ebb_new_i32();
+     TCGv_ptr udata = tcg_temp_ebb_new_ptr();
+@@ -106,12 +110,22 @@
+     tcg_gen_movi_ptr(udata, 0);
+     tcg_gen_ld_i32(cpu_index, tcg_env,
+                    -offsetof(ArchCPU, env) + offsetof(CPUState, cpu_index));
+-    gen_helper_plugin_vcpu_udata_cb(cpu_index, udata);
++    gen_helper(cpu_index, udata);
+ 
+     tcg_temp_free_ptr(udata);
+     tcg_temp_free_i32(cpu_index);
+ }
+ 
++static void gen_empty_udata_cb_no_wg(void)
++{
++    gen_empty_udata_cb(gen_helper_plugin_vcpu_udata_cb_no_wg);
++}
++
++static void gen_empty_udata_cb_no_rwg(void)
++{
++    gen_empty_udata_cb(gen_helper_plugin_vcpu_udata_cb_no_rwg);
++}
++
+ /*
+  * For now we only support addi_i64.
+  * When we support more ops, we can generate one empty inline cb for each.
+@@ -192,7 +206,8 @@
+                     gen_empty_mem_helper);
+         /* fall through */
+     case PLUGIN_GEN_FROM_TB:
+-        gen_wrapped(from, PLUGIN_GEN_CB_UDATA, gen_empty_udata_cb);
++        gen_wrapped(from, PLUGIN_GEN_CB_UDATA, gen_empty_udata_cb_no_rwg);
++        gen_wrapped(from, PLUGIN_GEN_CB_UDATA_R, gen_empty_udata_cb_no_wg);
+         gen_wrapped(from, PLUGIN_GEN_CB_INLINE, gen_empty_inline_cb);
+         break;
+     default:
+@@ -588,6 +603,12 @@
+     inject_udata_cb(ptb->cbs[PLUGIN_CB_REGULAR], begin_op);
+ }
+ 
++static void plugin_gen_tb_udata_r(const struct qemu_plugin_tb *ptb,
++                                  TCGOp *begin_op)
++{
++    inject_udata_cb(ptb->cbs[PLUGIN_CB_REGULAR_R], begin_op);
++}
++
+ static void plugin_gen_tb_inline(const struct qemu_plugin_tb *ptb,
+                                  TCGOp *begin_op)
+ {
+@@ -602,6 +623,14 @@
+     inject_udata_cb(insn->cbs[PLUGIN_CB_INSN][PLUGIN_CB_REGULAR], begin_op);
+ }
+ 
++static void plugin_gen_insn_udata_r(const struct qemu_plugin_tb *ptb,
++                                    TCGOp *begin_op, int insn_idx)
++{
++    struct qemu_plugin_insn *insn = g_ptr_array_index(ptb->insns, insn_idx);
++
++    inject_udata_cb(insn->cbs[PLUGIN_CB_INSN][PLUGIN_CB_REGULAR_R], begin_op);
++}
++
+ static void plugin_gen_insn_inline(const struct qemu_plugin_tb *ptb,
+                                    TCGOp *begin_op, int insn_idx)
+ {
+@@ -721,6 +750,9 @@
+                 case PLUGIN_GEN_CB_UDATA:
+                     plugin_gen_tb_udata(plugin_tb, op);
+                     break;
++                case PLUGIN_GEN_CB_UDATA_R:
++                    plugin_gen_tb_udata_r(plugin_tb, op);
++                    break;
+                 case PLUGIN_GEN_CB_INLINE:
+                     plugin_gen_tb_inline(plugin_tb, op);
+                     break;
+@@ -737,6 +769,9 @@
+                 case PLUGIN_GEN_CB_UDATA:
+                     plugin_gen_insn_udata(plugin_tb, op, insn_idx);
+                     break;
++                case PLUGIN_GEN_CB_UDATA_R:
++                    plugin_gen_insn_udata_r(plugin_tb, op, insn_idx);
++                    break;
+                 case PLUGIN_GEN_CB_INLINE:
+                     plugin_gen_insn_inline(plugin_tb, op, insn_idx);
+                     break;
+diff --git a/accel/tcg/plugin-helpers.h b/accel/tcg/plugin-helpers.h
+--- a/accel/tcg/plugin-helpers.h	2024-01-29 19:13:21.000000000 +0000
++++ b/accel/tcg/plugin-helpers.h	2026-08-13 17:30:23.373998793 +0000
+@@ -1,4 +1,5 @@
+ #ifdef CONFIG_PLUGIN
+-DEF_HELPER_FLAGS_2(plugin_vcpu_udata_cb, TCG_CALL_NO_RWG | TCG_CALL_PLUGIN, void, i32, ptr)
++DEF_HELPER_FLAGS_2(plugin_vcpu_udata_cb_no_wg, TCG_CALL_NO_WG | TCG_CALL_PLUGIN, void, i32, ptr)
++DEF_HELPER_FLAGS_2(plugin_vcpu_udata_cb_no_rwg, TCG_CALL_NO_RWG | TCG_CALL_PLUGIN, void, i32, ptr)
+ DEF_HELPER_FLAGS_4(plugin_vcpu_mem_cb, TCG_CALL_NO_RWG | TCG_CALL_PLUGIN, void, i32, i32, i64, ptr)
+ #endif
+diff --git a/gdbstub/gdbstub.c b/gdbstub/gdbstub.c
+--- a/gdbstub/gdbstub.c	2024-01-29 19:13:21.000000000 +0000
++++ b/gdbstub/gdbstub.c	2026-08-13 17:47:55.143095184 +0000
+@@ -500,7 +500,29 @@
+     g_assert_not_reached();
+ }
+ 
+-static int gdb_read_register(CPUState *cpu, GByteArray *buf, int reg)
++GArray *gdb_get_register_list(CPUState *cpu)
++{
++    CPUClass *cc = CPU_GET_CLASS(cpu);
++    GArray *results = g_array_new(false, false, sizeof(GDBRegDesc));
++    for (int i = 0; i < cc->gdb_num_core_regs; i++) {
++        GDBRegDesc desc = { i, NULL, cc->gdb_core_xml_file };
++        g_array_append_val(results, desc);
++    }
++
++    if (cpu->gdb_regs) {
++        for (guint feature_index = 0; feature_index < cpu->gdb_regs->len; feature_index++) {
++            GDBRegisterState *state = &g_array_index(
++                cpu->gdb_regs, GDBRegisterState, feature_index);
++            for (int i = 0; i < state->num_regs; i++) {
++                GDBRegDesc desc = { state->base_reg + i, NULL, state->xml };
++                g_array_append_val(results, desc);
++            }
++        }
++    }
++    return results;
++}
++
++int gdb_read_register(CPUState *cpu, GByteArray *buf, int reg)
+ {
+     CPUClass *cc = CPU_GET_CLASS(cpu);
+     CPUArchState *env = cpu_env(cpu);
+diff --git a/include/exec/gdbstub.h b/include/exec/gdbstub.h
+--- a/include/exec/gdbstub.h	2024-01-29 19:13:22.000000000 +0000
++++ b/include/exec/gdbstub.h	2026-08-13 17:30:58.122295521 +0000
+@@ -102,6 +102,15 @@
+  */
+ const GDBFeature *gdb_find_static_feature(const char *xmlname);
+ 
++typedef struct {
++    int gdb_reg;
++    const char *name;
++    const char *feature_name;
++} GDBRegDesc;
++
++int gdb_read_register(CPUState *cpu, GByteArray *buf, int reg);
++GArray *gdb_get_register_list(CPUState *cpu);
++
+ void gdb_set_stop_cpu(CPUState *cpu);
+ 
+ /* in gdbstub-xml.c, generated by scripts/feature_to_c.py */
+diff --git a/include/qemu/plugin.h b/include/qemu/plugin.h
+--- a/include/qemu/plugin.h	2024-01-29 19:13:22.000000000 +0000
++++ b/include/qemu/plugin.h	2026-08-13 17:30:23.373998793 +0000
+@@ -73,6 +73,7 @@
+ 
+ enum plugin_dyn_cb_subtype {
+     PLUGIN_CB_REGULAR,
++    PLUGIN_CB_REGULAR_R,
+     PLUGIN_CB_INLINE,
+     PLUGIN_N_CB_SUBTYPES,
+ };
+diff --git a/include/qemu/qemu-plugin.h b/include/qemu/qemu-plugin.h
+--- a/include/qemu/qemu-plugin.h	2024-01-29 19:13:22.000000000 +0000
++++ b/include/qemu/qemu-plugin.h	2026-08-13 18:47:58.394702225 +0000
+@@ -11,6 +11,7 @@
+ #ifndef QEMU_QEMU_PLUGIN_H
+ #define QEMU_QEMU_PLUGIN_H
+ 
++#include <glib.h>
+ #include <inttypes.h>
+ #include <stdbool.h>
+ #include <stddef.h>
+@@ -54,7 +55,7 @@
+ 
+ extern QEMU_PLUGIN_EXPORT int qemu_plugin_version;
+ 
+-#define QEMU_PLUGIN_VERSION 1
++#define QEMU_PLUGIN_VERSION 4
+ 
+ /**
+  * struct qemu_info_t - system information for plugins
+@@ -227,8 +228,8 @@
+  * @QEMU_PLUGIN_CB_R_REGS: callback reads the CPU's regs
+  * @QEMU_PLUGIN_CB_RW_REGS: callback reads and writes the CPU's regs
+  *
+- * Note: currently unused, plugins cannot read or change system
+- * register state.
++ * Note: currently QEMU_PLUGIN_CB_RW_REGS is unused, plugins cannot change
++ * system register state.
+  */
+ enum qemu_plugin_cb_flags {
+     QEMU_PLUGIN_CB_NO_REGS,
+@@ -708,4 +709,53 @@
+ QEMU_PLUGIN_API
+ uint64_t qemu_plugin_entry_code(void);
+ 
++/** struct qemu_plugin_register - Opaque handle for register access */
++struct qemu_plugin_register;
++
++/**
++ * typedef qemu_plugin_reg_descriptor - register descriptions
++ *
++ * @handle: opaque handle for retrieving value with qemu_plugin_read_register
++ * @name: register name
++ * @feature: optional feature descriptor, can be NULL
++ */
++typedef struct {
++    struct qemu_plugin_register *handle;
++    const char *name;
++    const char *feature;
++} qemu_plugin_reg_descriptor;
++
++/**
++ * qemu_plugin_get_registers() - return register list for current vCPU
++ *
++ * Returns a potentially empty GArray of qemu_plugin_reg_descriptor.
++ * Caller frees the array (but not the const strings).
++ *
++ * Should be used from a qemu_plugin_register_vcpu_init_cb() callback
++ * after the vCPU is initialised, i.e. in the vCPU context.
++ */
++QEMU_PLUGIN_API
++GArray *qemu_plugin_get_registers(void);
++
++QEMU_PLUGIN_API
++bool qemu_plugin_read_memory_vaddr(uint64_t addr,
++                                   GByteArray *data, size_t len);
++
++/**
++ * qemu_plugin_read_register() - read register for current vCPU
++ *
++ * @handle: a @qemu_plugin_reg_handle handle
++ * @buf: A GByteArray for the data owned by the plugin
++ *
++ * This function is only available in a context that register read access is
++ * explicitly requested via the QEMU_PLUGIN_CB_R_REGS flag.
++ *
++ * Returns the size of the read register. The content of @buf is in target byte
++ * order. On failure returns -1.
++ */
++QEMU_PLUGIN_API
++int qemu_plugin_read_register(struct qemu_plugin_register *handle,
++                              GByteArray *buf);
++
++
+ #endif /* QEMU_QEMU_PLUGIN_H */
+diff --git a/plugins/api.c b/plugins/api.c
+--- a/plugins/api.c	2024-01-29 19:13:22.000000000 +0000
++++ b/plugins/api.c	2026-08-13 18:47:58.394702225 +0000
+@@ -8,6 +8,7 @@
+  *
+  *  qemu_plugin_tb
+  *  qemu_plugin_insn
++ *  qemu_plugin_register
+  *
+  * Which can then be passed back into the API to do additional things.
+  * As such all the public functions in here are exported in
+@@ -35,10 +36,12 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qemu/main-loop.h"
+ #include "qemu/plugin.h"
+ #include "qemu/log.h"
+ #include "tcg/tcg.h"
+ #include "exec/exec-all.h"
++#include "exec/gdbstub.h"
+ #include "exec/ram_addr.h"
+ #include "disas/disas.h"
+ #include "plugin.h"
+@@ -89,7 +92,11 @@
+                                           void *udata)
+ {
+     if (!tb->mem_only) {
+-        plugin_register_dyn_cb__udata(&tb->cbs[PLUGIN_CB_REGULAR],
++        int index = flags == QEMU_PLUGIN_CB_R_REGS ||
++                    flags == QEMU_PLUGIN_CB_RW_REGS ?
++                    PLUGIN_CB_REGULAR_R : PLUGIN_CB_REGULAR;
++
++        plugin_register_dyn_cb__udata(&tb->cbs[index],
+                                       cb, flags, udata);
+     }
+ }
+@@ -109,7 +116,11 @@
+                                             void *udata)
+ {
+     if (!insn->mem_only) {
+-        plugin_register_dyn_cb__udata(&insn->cbs[PLUGIN_CB_INSN][PLUGIN_CB_REGULAR],
++        int index = flags == QEMU_PLUGIN_CB_R_REGS ||
++                    flags == QEMU_PLUGIN_CB_RW_REGS ?
++                    PLUGIN_CB_REGULAR_R : PLUGIN_CB_REGULAR;
++
++        plugin_register_dyn_cb__udata(&insn->cbs[PLUGIN_CB_INSN][index],
+                                       cb, flags, udata);
+     }
+ }
+@@ -427,3 +438,86 @@
+ #endif
+     return entry;
+ }
++
++/*
++ * Create register handles.
++ *
++ * We need to create a handle for each register so the plugin
++ * infrastructure can call gdbstub to read a register. They are
++ * currently just a pointer encapsulation of the gdb_reg but in
++ * future may hold internal plugin state so its important plugin
++ * authors are not tempted to treat them as numbers.
++ *
++ * We also construct a result array with those handles and some
++ * ancillary data the plugin might find useful.
++ */
++
++static const char *aarch64_register_name(int reg)
++{
++    static const char * const names[] = {
++        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
++        "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
++        "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
++        "x24", "x25", "x26", "x27", "x28", "x29", "x30", "sp",
++        "pc", "cpsr",
++        "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7",
++        "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
++        "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
++        "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31",
++        "fpsr", "fpcr",
++    };
++
++    return reg >= 0 && reg < ARRAY_SIZE(names) ? names[reg] : NULL;
++}
++
++static GArray *create_register_handles(GArray *gdbstub_regs)
++{
++    GArray *find_data = g_array_new(true, true,
++                                    sizeof(qemu_plugin_reg_descriptor));
++
++    for (int i = 0; i < gdbstub_regs->len; i++) {
++        GDBRegDesc *grd = &g_array_index(gdbstub_regs, GDBRegDesc, i);
++        const char *name = grd->name;
++#ifdef TARGET_AARCH64
++        if (name == NULL) {
++            name = aarch64_register_name(grd->gdb_reg);
++        }
++#endif
++        if (name == NULL) {
++            continue;
++        }
++        qemu_plugin_reg_descriptor desc = {
++            .handle = GINT_TO_POINTER(grd->gdb_reg + 1),
++            .name = g_intern_string(name),
++            .feature = grd->feature_name ? g_intern_string(grd->feature_name) : NULL,
++        };
++        g_array_append_val(find_data, desc);
++    }
++    return find_data;
++}
++
++GArray *qemu_plugin_get_registers(void)
++{
++    g_assert(current_cpu);
++
++    g_autoptr(GArray) regs = gdb_get_register_list(current_cpu);
++    return create_register_handles(regs);
++}
++
++bool qemu_plugin_read_memory_vaddr(uint64_t addr, GByteArray *data, size_t len)
++{
++    g_assert(current_cpu);
++
++    if (len == 0) {
++        return false;
++    }
++    g_byte_array_set_size(data, len);
++    return cpu_memory_rw_debug(current_cpu, addr, data->data, len, false) == 0;
++}
++
++int qemu_plugin_read_register(struct qemu_plugin_register *reg, GByteArray *buf)
++{
++    g_assert(current_cpu);
++
++    return gdb_read_register(current_cpu, buf, GPOINTER_TO_INT(reg) - 1);
++}
+diff --git a/plugins/core.c b/plugins/core.c
+--- a/plugins/core.c	2024-01-29 19:13:22.000000000 +0000
++++ b/plugins/core.c	2026-08-13 18:47:58.394702225 +0000
+@@ -209,7 +209,8 @@
+     do_plugin_register_cb(id, ev, func, udata);
+ }
+ 
+-void qemu_plugin_vcpu_init_hook(CPUState *cpu)
++static void qemu_plugin_vcpu_init__async(CPUState *cpu,
++                                           run_on_cpu_data unused)
+ {
+     bool success;
+ 
+@@ -223,6 +224,12 @@
+     plugin_vcpu_cb__simple(cpu, QEMU_PLUGIN_EV_VCPU_INIT);
+ }
+ 
++void qemu_plugin_vcpu_init_hook(CPUState *cpu)
++{
++    /* Register APIs require the callback to run in this vCPU's context. */
++    async_run_on_cpu(cpu, qemu_plugin_vcpu_init__async, RUN_ON_CPU_NULL);
++}
++
+ void qemu_plugin_vcpu_exit_hook(CPUState *cpu)
+ {
+     bool success;
+diff --git a/plugins/qemu-plugins.symbols b/plugins/qemu-plugins.symbols
+--- a/plugins/qemu-plugins.symbols	2024-01-29 19:13:22.000000000 +0000
++++ b/plugins/qemu-plugins.symbols	2026-08-13 18:47:58.394702225 +0000
+@@ -3,6 +3,7 @@
+   qemu_plugin_end_code;
+   qemu_plugin_entry_code;
+   qemu_plugin_get_hwaddr;
++  qemu_plugin_get_registers;
+   qemu_plugin_hwaddr_device_name;
+   qemu_plugin_hwaddr_is_io;
+   qemu_plugin_hwaddr_phys_addr;
+@@ -20,6 +21,8 @@
+   qemu_plugin_n_vcpus;
+   qemu_plugin_outs;
+   qemu_plugin_path_to_binary;
++  qemu_plugin_read_memory_vaddr;
++  qemu_plugin_read_register;
+   qemu_plugin_register_atexit_cb;
+   qemu_plugin_register_flush_cb;
+   qemu_plugin_register_vcpu_exit_cb;

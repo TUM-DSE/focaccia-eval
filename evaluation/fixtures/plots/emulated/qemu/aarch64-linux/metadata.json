@@ -1,0 +1,38 @@
+{
+  "schema": "focaccia-emulated-evaluation-v1",
+  "role": "qemu",
+  "system": "aarch64-linux",
+  "status": "passed",
+  "cases": {
+    "qemu-508": {
+      "kind": "trigger",
+      "benchmark": "508",
+      "emulator": "qemu-6-1-0",
+      "status": "passed",
+      "iterations": [{
+        "profile": "profiles/trigger.json",
+        "profileSha256": "19673831ff3fa46b55d8881e802c700766b1d9ce9fcd6cf6c26bb03d3aba9e95"
+      }]
+    },
+    "qemu-app-lua": {
+      "kind": "application",
+      "benchmark": "lua",
+      "emulator": "qemu-9-0-0",
+      "status": "passed",
+      "iterations": [{
+        "profile": "profiles/lua.json",
+        "profileSha256": "c96834efc5bf0a81155c88ea0e21664ae42d679d845ef23967f2cdc91df47d5d"
+      }]
+    },
+    "qemu-app-curl-full": {
+      "kind": "application",
+      "benchmark": "curl-full",
+      "emulator": "qemu-8-2-0",
+      "status": "passed",
+      "iterations": [{
+        "profile": "profiles/curl-full.json",
+        "profileSha256": "77f4902e8df34c95e464cdd4870e70c2ba433caa84c7be9afc3ddc1c4297526b"
+      }]
+    }
+  }
+}

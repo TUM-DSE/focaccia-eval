@@ -1,0 +1,14 @@
+diff --git a/src/Makefile.inc b/src/Makefile.inc
+index 6e5e31f80..9a226f14e 100644
+--- a/src/Makefile.inc
++++ b/src/Makefile.inc
+@@ -107,7 +107,8 @@ CURL_CFILES = \
+   tool_writeout.c \
+   tool_writeout_json.c \
+   tool_xattr.c \
+-  var.c
++  var.c \
++  preload.c
+ 
+ CURL_HFILES = \
+   config2setopts.h \

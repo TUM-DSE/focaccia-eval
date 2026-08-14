@@ -1,0 +1,12 @@
+{
+  "schema": "focaccia-reproducer-size-evidence-v1",
+  "focacciaRevision": "601341882acdc303eb717084487ca9b7d38765e4",
+  "cases": {
+    "1372": {
+      "guestProgram": "size-evidence/guest-1372.bin",
+      "guestProgramSha256": "44766063fd6baa01802f40a52fbc98e7c781d00fd9703c3efebc4c8f4c144489",
+      "minimizedProgram": "size-evidence/minimized-1372.bin",
+      "minimizedProgramSha256": "f44972606da306d2bb009ad9fedf753e7f213313232247ec20a3021b65ea842b"
+    }
+  }
+}

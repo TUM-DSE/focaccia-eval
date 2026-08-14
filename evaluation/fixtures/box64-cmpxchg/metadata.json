@@ -1,0 +1,20 @@
+{
+  "schema": "focaccia-pinned-oracle-v1",
+  "case": "508-box64",
+  "producerSystem": "x86_64-linux",
+  "guestArchitecture": {
+    "isa": "x86_64",
+    "endianness": "little"
+  },
+  "producerFocacciaRevision": "edd7795632b3f7908ddfc4ce4b89619dc8ad485e",
+  "sourceSha256": "98e604a18e8e146373cbbd601060a82d8111a4ced20acd9f847e7533aaca49c5",
+  "binarySha256": "12d6238593ab9c9beec94c973f9de41dda7234cc3b629eaceb7b4281507313b0",
+  "oracleSha256": "aa21309b6478408a15a3a49d4c2c736b32519cf74a2ded1eaba49a1d41229bf8",
+  "traceFormat": "msgpack",
+  "arguments": [],
+  "inputs": [],
+  "deterministicReplay": null,
+  "startAddress": 4198484,
+  "stopAddress": 4198487,
+  "capturedAt": "2026-08-11T12:33:06.381448+00:00"
+}

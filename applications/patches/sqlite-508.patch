@@ -1,0 +1,26 @@
+diff --git a/src/shell.c.in b/src/shell.c.in
+index 9d6335477..c0d1c0c8d 100644
+--- a/src/shell.c.in
++++ b/src/shell.c.in
+@@ -794,6 +794,21 @@ static char *local_getline(char *zLine, FILE *in){
+       zLine[n] = 0;
+       break;
+     }
++    // --- bug 508 ---
++      long mem = *(long *)&zLine[n] & 0x00000000FFFFFFFF;
++      volatile register long rax asm("rax") = *(long *)&zLine[n];
++      volatile long rax2 = rax;
++      register int edi asm("edi") = 0xdeadbeef;
++      asm volatile (".globl focaccia_injection_sqlite_508\n"
++                    "focaccia_injection_sqlite_508:\n"
++                    "cmpxchg %[edi],%[mem]\n"
++                    ".globl focaccia_trace_stop_sqlite\n"
++                    "focaccia_trace_stop_sqlite:"
++          : [ mem ] "+m"(mem), [ rax ] "+r"(rax)
++          : [ edi ] "r"(edi));
++
++      assert(rax==rax2);
++    // --- bug 508 ---
+     while( zLine[n] ) n++;
+     if( n>0 && zLine[n-1]=='\n' ){
+       n--;

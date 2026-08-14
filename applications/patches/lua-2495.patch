@@ -1,0 +1,42 @@
+diff --git a/lua.c b/lua.c
+index b2967a44..cecd8eb5 100644
+--- a/lua.c
++++ b/lua.c
+@@ -67,6 +67,24 @@ static void lstop (lua_State *L, lua_Debug *ar) {
+   luaL_error(L, "interrupted!");
+ }
+ 
++uint8_t i_R8[8] = { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
++uint8_t i_MM0[8] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
++uint8_t o_R8[8];
++
++void __attribute__ ((noinline)) run() {
++    __asm__ (
++        ".intel_syntax noprefix\n"
++        "mov r8, qword ptr [rip + i_R8]\n"
++        "movq mm0, qword ptr [rip + i_MM0]\n"
++        ".globl focaccia_injection_lua_2495\n"
++        "focaccia_injection_lua_2495:\n"
++        ".byte 0x4f, 0x0f, 0x7e, 0xc0\n"
++        ".globl focaccia_trace_stop_lua\n"
++        "focaccia_trace_stop_lua:\n"
++        "mov qword ptr [rip + o_R8], r8\n"
++        ".att_syntax\n"
++    );
++}
+ 
+ /*
+ ** Function to be called at a C signal. Because a C signal cannot
+@@ -74,10 +88,12 @@ static void lstop (lua_State *L, lua_Debug *ar) {
+ ** this function only sets a hook that, when called, will stop the
+ ** interpreter.
+ */
++
+ static void laction (int i) {
+   int flag = LUA_MASKCALL | LUA_MASKRET | LUA_MASKLINE | LUA_MASKCOUNT;
+   setsignal(i, SIG_DFL); /* if another SIGINT happens, terminate process */
+   lua_sethook(globalL, lstop, flag, 1);
++  run();
+ }
+ 
+ 

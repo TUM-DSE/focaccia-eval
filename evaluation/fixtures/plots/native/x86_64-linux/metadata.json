@@ -1,0 +1,40 @@
+{
+  "schema": "focaccia-native-evaluation-v2",
+  "role": "native",
+  "system": "x86_64-linux",
+  "status": "passed",
+  "cases": {
+    "508": {
+      "kind": "trigger",
+      "status": "passed",
+      "iterations": [{
+        "profile": "profiles/trigger.json",
+        "profileSha256": "b41c6bf95cf6d9f5679d1a91a57302e9f93cab1342cf2eca1c9d20144e3f5846"
+      }]
+    },
+    "lua": {
+      "kind": "application",
+      "status": "passed",
+      "iterations": [{
+        "profile": "profiles/lua.json",
+        "profileSha256": "ab18eff09c4419e55893c1893777c68f39eb808e43d2bdb4ca9b4d95b3241579"
+      }]
+    },
+    "curl-full": {
+      "kind": "application",
+      "status": "passed",
+      "iterations": [{
+        "fullCaptures": {
+          "native-full-cross-validated": {
+            "profile": "profiles/curl-full-cross.json",
+            "profileSha256": "667c0e47a89aa0888c583488061dfd0c8e698a093770235b928475dad8e8bb84"
+          },
+          "native-full-speculative": {
+            "profile": "profiles/curl-full-speculative.json",
+            "profileSha256": "cf13b18c0aa76adf90f6d49a0551f9897c03ce17959c1d8060771e72677a60d4"
+          }
+        }
+      }]
+    }
+  }
+}

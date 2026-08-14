@@ -1,0 +1,32 @@
+diff --git a/lib/transfer.c b/lib/transfer.c
+index d8a0d6c0b..fbd9f668b 100644
+--- a/lib/transfer.c
++++ b/lib/transfer.c
+@@ -297,6 +297,27 @@ static CURLcode sendrecv_dl(struct Curl_easy *data,
+     /* We only get a 0-length receive at the end of the response */
+     is_eos = (blen == 0);
+ 
++    // Introduce bug
++
++    // int mem = 0x12345678;
++    // register long rax asm("rax") = 0x1234567812345678;
++    // register int edi asm("edi") = 0x77777777;
++    // asm volatile("cmpxchg %[edi],%[mem]"
++    //     : [ mem ] "+m"(mem), [ rax ] "+r"(rax)
++    //     : [ edi ] "r"(edi));
++    // long rax2 = rax;
++    // printf("rax2 = %lx\n", rax2);
++    // printf("rax = %lx\n", rax);
++    __asm__ (
++      "movq $0x1, %r8\n"
++      "mov $0xedbf530a, %r9\n"
++      ".globl focaccia_injection_curl_2175\n"
++      "focaccia_injection_curl_2175:\n"
++      "blsi %r9d, %r8d\n"
++      ".globl focaccia_trace_stop_curl\n"
++      "focaccia_trace_stop_curl:\n"
++    );
++
+     if(!blen) {
+       result = Curl_req_stop_send_recv(data);
+       if(result)
