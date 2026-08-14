@@ -23,7 +23,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from matplotlib.gridspec import GridSpec
 from matplotlib.patches import ConnectionPatch, Patch
+from matplotlib.ticker import MultipleLocator
 
 
 FIXED_METADATA = {"CreationDate": None}
@@ -507,13 +509,15 @@ def _save(fig: plt.Figure, output: Path, name: str) -> Path:
 def plot_trigger_overhead(data: Measurements, output: Path) -> Path | None:
     component_names = ("concrete", "symbolic", "validation")
     qemu_names = ("execution", "tracing", "validation")
-    labels: list[str] = []
-    categories: list[str] = []
-    native_rows: list[tuple[float, ...]] = []
-    qemu_rows: list[tuple[float, ...]] = []
+    grouped: list[
+        tuple[str, list[str], list[tuple[float, ...]], list[tuple[float, ...]]]
+    ] = []
     omitted: list[str] = []
 
     for category, benchmarks in TRIGGER_GROUPS:
+        labels: list[str] = []
+        native_rows: list[tuple[float, ...]] = []
+        qemu_rows: list[tuple[float, ...]] = []
         for benchmark in benchmarks:
             baseline = data.get(benchmark, "native", "execution")
             native = data.components(
@@ -534,69 +538,83 @@ def plot_trigger_overhead(data: Measurements, output: Path) -> Path | None:
                 omitted.append(benchmark)
                 continue
             labels.append(f"#{benchmark}")
-            categories.append(category)
             native_rows.append(tuple(value / baseline for value in native))
             qemu_rows.append(tuple(value / baseline for value in qemu))
+        if labels:
+            grouped.append((category, labels, native_rows, qemu_rows))
 
     if omitted:
         _warn(f"trigger overhead omits incomplete cases: {', '.join(omitted)}")
-    if not labels:
+    if not grouped:
         _warn(
             "not generating split-overhead-breakdown.pdf: no complete trigger samples"
         )
         return None
 
-    fig, axes = plt.subplots(2, 1, figsize=PAPER_TWO_COLUMN, sharex=True)
-    x = np.arange(len(labels))
-    legend_labels = ("Concrete execution", "Symbolic/trace collection", "Validation")
-    for axis, rows, title in zip(axes, (native_rows, qemu_rows), ("Native", "QEMU")):
-        values = np.asarray(rows)
-        bottom = np.zeros(len(labels))
-        for index, legend_label in enumerate(legend_labels):
-            axis.bar(
-                x,
-                values[:, index],
-                bottom=bottom,
-                color=COLORS[index],
-                edgecolor="black",
-                linewidth=0.6,
-                hatch=HATCHES[index],
-                label=legend_label,
-            )
-            bottom += values[:, index]
-        axis.set_ylabel(title, rotation=0, ha="right", va="center")
-        axis.spines[["top", "right"]].set_visible(False)
-        axis.grid(axis="y", linewidth=0.3, alpha=0.4)
+    widths = [max(len(labels), 0.35) for _, labels, _, _ in grouped]
+    figure = plt.figure(figsize=(PAPER_TWO_COLUMN[0], 1.5))
+    grid = GridSpec(2, len(grouped), width_ratios=widths, figure=figure)
+    native_axes: list[plt.Axes] = []
+    qemu_axes: list[plt.Axes] = []
+    legend_labels = ("Concrete", "Symbolic", "Validation")
+    paper_hatches = ("\\", "x", "O")
+    all_native = [sum(row) for _, _, rows, _ in grouped for row in rows]
+    all_qemu = [sum(row) for _, _, _, rows in grouped for row in rows]
+    native_limit = max(all_native) * 1.08
+    qemu_limit = max(all_qemu) * 1.08
+    handles: list[object] = []
 
-    axes[-1].set_xticks(x, labels)
-    axes[-1].set_ylabel("QEMU", rotation=0, ha="right", va="center")
-    fig.supylabel("Overhead (× native execution)", x=0.01)
-    axes[0].legend(
-        loc="upper center", bbox_to_anchor=(0.5, 1.42), ncol=3, frameon=False
+    for column, (category, labels, native_rows, qemu_rows) in enumerate(grouped):
+        native_axis = figure.add_subplot(grid[0, column])
+        qemu_axis = figure.add_subplot(grid[1, column])
+        native_axes.append(native_axis)
+        qemu_axes.append(qemu_axis)
+        for axis in (native_axis, qemu_axis):
+            axis.spines[["top", "right"]].set_visible(False)
+        if column:
+            for axis in (native_axis, qemu_axis):
+                axis.spines["left"].set_visible(False)
+                axis.set_yticks([])
+
+        for axis, rows in ((native_axis, native_rows), (qemu_axis, qemu_rows)):
+            values = np.asarray(rows)
+            positions = np.arange(len(labels))
+            bottom = np.zeros(len(labels))
+            for index, legend_label in enumerate(legend_labels):
+                bars = axis.bar(
+                    positions,
+                    values[:, index],
+                    bottom=bottom,
+                    width=0.4,
+                    color=COLORS[index],
+                    edgecolor="black",
+                    linewidth=0.6,
+                    hatch=paper_hatches[index],
+                    label=legend_label,
+                )
+                if column == 0 and axis is native_axis:
+                    handles.append(bars)
+                bottom += values[:, index]
+
+        native_axis.set_ylim(0, native_limit)
+        native_axis.set_xticks([])
+        qemu_axis.set_ylim(0, qemu_limit)
+        qemu_axis.set_xticks(np.arange(len(labels)), labels, fontsize=7)
+        qemu_axis.set_xlabel(category)
+
+    figure.supylabel("Overhead", x=0.01, y=0.58)
+    figure.text(0.045, 0.78, "Native", rotation=90, va="center", ha="center")
+    figure.text(0.045, 0.37, "QEMU", rotation=90, va="center", ha="center")
+    figure.legend(
+        handles,
+        legend_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.09),
+        ncol=3,
+        frameon=False,
     )
-
-    previous = None
-    start = 0
-    for index, category in enumerate(categories + [""]):
-        if previous is None:
-            previous = category
-        if category != previous:
-            center = (start + index - 1) / 2
-            axes[-1].text(
-                center,
-                -0.34,
-                previous,
-                ha="center",
-                va="top",
-                transform=axes[-1].get_xaxis_transform(),
-            )
-            if index < len(categories):
-                for axis in axes:
-                    axis.axvline(index - 0.5, color="black", linewidth=0.4, alpha=0.5)
-            start = index
-            previous = category
-    fig.subplots_adjust(bottom=0.24, top=0.84, hspace=0.18)
-    return _save(fig, output, "split-overhead-breakdown.pdf")
+    figure.tight_layout()
+    return _save(figure, output, "split-overhead-breakdown.pdf")
 
 
 def plot_selective_applications(data: Measurements, output: Path) -> Path | None:
@@ -638,57 +656,83 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
         )
         return None
 
-    fig, axis = plt.subplots(figsize=PAPER_ONE_COLUMN)
-    x = np.arange(len(applications))
-    width = 0.36
-    for offset, rows, mode_label in (
-        (-width / 2, native_rows, "Native"),
-        (width / 2, qemu_rows, "QEMU"),
-    ):
-        values = np.asarray(rows)
-        bottom = np.zeros(len(applications))
-        for index in range(3):
-            axis.bar(
-                x + offset,
-                values[:, index],
-                width,
-                bottom=bottom,
-                color=COLORS[index],
-                edgecolor="black",
-                linewidth=0.6,
-                hatch=HATCHES[index] if mode_label == "Native" else None,
-            )
-            bottom += values[:, index]
-        for position, total in zip(x + offset, bottom):
-            axis.text(
-                position, total, f"{total:.1f}", ha="center", va="bottom", fontsize=7
-            )
-
-    axis.set_xticks(x, applications)
-    axis.set_ylabel("minutes")
-    axis.spines[["top", "right"]].set_visible(False)
-    component_legend = [
-        Patch(
-            facecolor=COLORS[index],
-            edgecolor="black",
-            hatch=HATCHES[index],
-            label=label,
-        )
-        for index, label in enumerate(("Concrete", "Symbolic/trace", "Validation"))
-    ]
-    mode_legend = [
-        Patch(facecolor="white", edgecolor="black", hatch="//", label="Native"),
-        Patch(facecolor="white", edgecolor="black", label="QEMU"),
-    ]
-    axis.legend(
-        handles=component_legend + mode_legend,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.3),
-        ncol=3,
-        frameon=False,
+    figure, axes = plt.subplots(
+        len(applications) * 2,
+        figsize=(PAPER_ONE_COLUMN[0], 2.3),
+        sharex=True,
     )
-    fig.tight_layout()
-    return _save(fig, output, "realworld-split-overhead-breakdown.pdf")
+    hatches = ("\\", "x", "O")
+    labels = ("Concrete", "Symbolic", "Validation")
+    handles: list[object] = []
+    all_rows = native_rows + qemu_rows
+    maximum = max(sum(row) for row in all_rows) * 1.1
+
+    for mode_index, rows in enumerate((native_rows, qemu_rows)):
+        for application_index, (application, values) in enumerate(
+            zip(applications, rows)
+        ):
+            axis_index = mode_index * len(applications) + application_index
+            axis = axes[axis_index]
+            left = 0.0
+            for component_index, value in enumerate(values):
+                bars = axis.barh(
+                    0,
+                    value,
+                    left=left,
+                    height=0.25,
+                    color=COLORS[component_index],
+                    edgecolor="black",
+                    linewidth=0.6,
+                    hatch=hatches[component_index],
+                )
+                if axis_index == 0:
+                    handles.append(bars[0])
+                left += value
+            axis.text(left, 0, f" {int(left)}", va="center", ha="left", fontsize=8)
+            axis.set_ylabel(
+                application, fontsize=8, rotation=0, va="center", ha="right"
+            )
+            axis.set_yticks([])
+            axis.set_xticks([])
+            axis.spines[:].set_visible(False)
+            axis.set_xlim(0, maximum)
+
+    axes[-1].spines["bottom"].set_visible(True)
+    axes[-1].spines["bottom"].set_position(("outward", 6))
+    axes[-1].set_xlabel("minutes")
+    axes[-1].xaxis.set_major_locator(MultipleLocator(5))
+    axes[-1].tick_params(axis="x", labelsize=7)
+    for axis in axes[:-1]:
+        axis.tick_params(axis="x", length=0, labelbottom=False)
+
+    figure.text(0.02, 0.74, "Native", rotation=90, va="center", ha="center")
+    figure.text(0.02, 0.36, "QEMU", rotation=90, va="center", ha="center")
+    axes[0].legend(
+        handles,
+        labels,
+        loc="lower right",
+        bbox_to_anchor=(1, 1),
+        ncol=3,
+        columnspacing=0.9,
+        handletextpad=0.4,
+        frameon=False,
+        fontsize=8,
+    )
+    native_bottom = axes[len(applications) - 1].get_position().y0
+    qemu_top = axes[len(applications)].get_position().y1
+    separator = (native_bottom + qemu_top) / 2 + 0.05
+    figure.add_artist(
+        plt.Line2D(
+            [0.1, 0.97],
+            [separator, separator],
+            transform=figure.transFigure,
+            linestyle="--",
+            linewidth=0.8,
+            color="black",
+        )
+    )
+    figure.tight_layout()
+    return _save(figure, output, "realworld-split-overhead-breakdown.pdf")
 
 
 def plot_full_curl(data: Measurements, output: Path) -> Path | None:
@@ -715,32 +759,70 @@ def plot_full_curl(data: Measurements, output: Path) -> Path | None:
         )
         return None
 
-    values = np.asarray((cross_validated, speculative, qemu)) / 60
-    labels = ("Cross-validated", "Speculative", "QEMU")
-    fig, axis = plt.subplots(figsize=(PAPER_ONE_COLUMN[0], 1.7))
-    y = np.arange(3)
-    left = np.zeros(3)
-    for index, component in enumerate(("Concrete", "Symbolic/trace", "Validation")):
-        axis.barh(
-            y,
-            values[:, index],
-            left=left,
-            color=COLORS[index],
-            edgecolor="black",
-            linewidth=0.6,
-            hatch=HATCHES[index],
-            label=component,
+    rows = np.asarray((cross_validated, speculative, qemu)) / 60
+    labels = ("Cross\nValidated", "Speculative", "QEMU")
+    components = ("Concrete", "Symbolic", "Validation")
+    hatches = ("\\", "x", "O")
+    figure, axes = plt.subplots(
+        3, figsize=(PAPER_ONE_COLUMN[0], 1.55), sharex=True
+    )
+    handles: list[object] = []
+    maximum = max(sum(row) for row in rows) * 1.1
+
+    for row_index, (axis, label, values) in enumerate(zip(axes, labels, rows)):
+        left = 0.0
+        for component_index, value in enumerate(values):
+            bars = axis.barh(
+                0,
+                value,
+                left=left,
+                height=0.22,
+                color=COLORS[component_index],
+                edgecolor="black",
+                linewidth=0.6,
+                hatch=hatches[component_index],
+            )
+            if row_index == 0:
+                handles.append(bars[0])
+            left += value
+        axis.text(left, 0, f" {int(left)}", va="center", ha="left", fontsize=8)
+        axis.set_ylabel(label, fontsize=8, rotation=0, va="center", ha="right")
+        axis.set_yticks([])
+        axis.set_xticks([])
+        axis.spines[:].set_visible(False)
+        axis.set_xlim(0, maximum)
+
+    axes[0].legend(
+        handles,
+        components,
+        loc="lower right",
+        bbox_to_anchor=(1, 1),
+        ncol=3,
+        columnspacing=0.9,
+        handletextpad=0.4,
+        frameon=False,
+    )
+    axes[-1].spines["bottom"].set_visible(True)
+    axes[-1].spines["bottom"].set_position(("outward", 6))
+    axes[-1].set_xlabel("minutes")
+    axes[-1].xaxis.set_major_locator(MultipleLocator(10))
+    axes[-1].tick_params(axis="x", labelsize=7)
+    for axis in axes[:-1]:
+        axis.tick_params(axis="x", length=0, labelbottom=False)
+
+    separator = (axes[1].get_position().y0 + axes[2].get_position().y1) / 2 + 0.125
+    figure.add_artist(
+        plt.Line2D(
+            [0.17, 0.97],
+            [separator, separator],
+            transform=figure.transFigure,
+            linestyle="--",
+            linewidth=0.8,
+            color="black",
         )
-        left += values[:, index]
-    for position, total in zip(y, left):
-        axis.text(total, position, f" {total:.1f}", va="center", fontsize=7)
-    axis.set_yticks(y, labels)
-    axis.invert_yaxis()
-    axis.set_xlabel("minutes")
-    axis.spines[["top", "right", "left"]].set_visible(False)
-    axis.legend(loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=3, frameon=False)
-    fig.tight_layout()
-    return _save(fig, output, "tracing-comparison.pdf")
+    )
+    figure.tight_layout()
+    return _save(figure, output, "tracing-comparison.pdf")
 
 
 def plot_reproducer_sizes(
@@ -776,7 +858,7 @@ def plot_reproducer_sizes(
     fig, axes_value = plt.subplots(
         1,
         len(populated),
-        figsize=PAPER_TWO_COLUMN,
+        figsize=(PAPER_TWO_COLUMN[0], 1.5),
         squeeze=False,
         gridspec_kw={"width_ratios": [count for _, count in populated]},
     )
@@ -797,7 +879,7 @@ def plot_reproducer_sizes(
             color=COLORS[0],
             edgecolor="black",
             linewidth=0.6,
-            hatch="//",
+            hatch="/",
         )
         axis.bar(
             x + width / 2,
@@ -806,7 +888,7 @@ def plot_reproducer_sizes(
             color=COLORS[1],
             edgecolor="black",
             linewidth=0.6,
-            hatch="OO",
+            hatch="o",
         )
         for position, value in zip(x - width / 2, guest):
             axis.text(
@@ -837,22 +919,22 @@ def plot_reproducer_sizes(
             Patch(
                 facecolor=COLORS[0],
                 edgecolor="black",
-                hatch="//",
+                hatch="/",
                 label="Guest program",
             ),
             Patch(
                 facecolor=COLORS[1],
                 edgecolor="black",
-                hatch="OO",
+                hatch="o",
                 label="Minimized program",
             ),
         ],
         loc="upper center",
-        bbox_to_anchor=(0.5, 1.02),
+        bbox_to_anchor=(0.5, 1.09),
         ncol=2,
         frameon=False,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.91))
+    fig.tight_layout()
     return _save(fig, output, "reproducer-code-size.pdf")
 
 
