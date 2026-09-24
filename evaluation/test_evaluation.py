@@ -1455,6 +1455,23 @@ class EvaluationTests(unittest.TestCase):
                 self.assertTrue(popen.call_args.kwargs["start_new_session"])
                 self.assertTrue(popen.call_args.kwargs["stdout"].closed)
 
+    def test_gdbserver_unreapable_cleanup_does_not_replace_result(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            log = Path(temporary_directory) / "server.log"
+            with (
+                mock.patch.object(evaluation.subprocess, "Popen") as popen,
+                mock.patch.object(evaluation.os, "killpg"),
+            ):
+                process = popen.return_value
+                process.pid = 1234
+                process.poll.return_value = None
+                process.wait.side_effect = evaluation.subprocess.TimeoutExpired(
+                    "server", 3
+                )
+                with evaluation.ManagedProcess(("server",), log):
+                    pass
+                process.kill.assert_called_once()
+
     def test_gdbserver_readiness_does_not_connect(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             log = Path(temporary_directory) / "server.log"

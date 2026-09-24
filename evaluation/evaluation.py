@@ -229,7 +229,17 @@ class ManagedProcess:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                process.wait(timeout=3)
+                # A QEMU gdbstub can remain visible as an uninterruptible or
+                # namespace-owned process after its report is complete.  Cleanup
+                # must not replace the validator result with TimeoutExpired.
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
         self.close()
 
     def close(self) -> None:

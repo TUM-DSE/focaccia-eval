@@ -38,7 +38,7 @@ let
     cd evaluation
     ruff check evaluation.py test_evaluation.py
     ruff format --check evaluation.py test_evaluation.py
-    python -m unittest -v test_evaluation.EvaluationTests.test_native_trigger_gdbserver_transport test_evaluation.EvaluationTests.test_gdbserver_readiness_does_not_connect test_evaluation.EvaluationTests.test_gdbserver_lifecycle_cleanup
+    python -m unittest -v test_evaluation.EvaluationTests.test_native_trigger_gdbserver_transport test_evaluation.EvaluationTests.test_gdbserver_readiness_does_not_connect test_evaluation.EvaluationTests.test_gdbserver_lifecycle_cleanup test_evaluation.EvaluationTests.test_gdbserver_unreapable_cleanup_does_not_replace_result
     jq -e '.gdbserverProgram == "${pkgs.gdb}/bin/gdbserver" and (if .triggers | has("1861404") then .triggers."1861404".nativeTransport == "gdbserver" else true end)' ${nativeEvaluationConfig}
     test -x ${pkgs.gdb}/bin/gdbserver
     touch "$out"
