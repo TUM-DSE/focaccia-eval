@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 from contextlib import chdir
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -102,6 +104,924 @@ class EvaluationTests(unittest.TestCase):
         self.assertFalse(evaluation._expected_guest_signal(report, "SIGSEGV", 0x401015))
         report["terminal_reason"] = None
         self.assertFalse(evaluation._expected_guest_signal(report, "SIGSEGV", 0x401014))
+
+    def _gdb_trigger_configuration(self, root, **contract):
+        unused = root / "unused"
+        return self._write_config(
+            root,
+            capture=unused,
+            nm=unused,
+            rr=unused,
+            role="qemu",
+            emulators={
+                "qemu-test": {
+                    "backend": "qemu-gdb",
+                    "output": str(root),
+                    "version": "1",
+                }
+            },
+            emulator_cases={
+                "qemu-test": {
+                    "kind": "trigger",
+                    "trigger": "test",
+                    "guestSystem": "x86_64-linux",
+                    "emulator": "qemu-test",
+                    "program": "bin/qemu-x86_64",
+                    "expectedValidation": "mismatch",
+                    "expectedMismatchSourceSymbol": "focaccia_trace_start",
+                    "expectedMismatchSourceOffset": 23,
+                    "expectedMismatchLength": 5,
+                    "expectedMismatchCode": "register-content-mismatch",
+                    "expectedMismatchSubject": "CF",
+                    **contract,
+                }
+            },
+        )
+
+    def _native_bundle_fixture(self, root):
+        directory = root / "native" / "x86_64-linux"
+        directory.mkdir(parents=True)
+        (directory / "binary").write_bytes(b"binary")
+        (directory / "oracle").write_bytes(b"oracle")
+        item = {
+            "kind": "trigger",
+            "binary": "binary",
+            "oracle": "oracle",
+            "binarySha256": evaluation._sha256(directory / "binary"),
+            "oracleSha256": evaluation._sha256(directory / "oracle"),
+            "expectedNativeStatus": 0,
+            "traceFormat": "msgpack",
+        }
+        document = {
+            "schema": evaluation.NATIVE_SCHEMA,
+            "role": "native",
+            "system": "x86_64-linux",
+            "machine": "AMD64",
+            "traceFormat": "msgpack",
+            "status": "failed",
+            "cases": {
+                "test": {"kind": "trigger", "status": "passed", "iterations": [item]},
+                "unrelated": {"kind": "trigger", "status": "failed", "iterations": []},
+            },
+        }
+        case = evaluation.EmulatorCase(
+            identifier="qemu-test",
+            kind="trigger",
+            trigger="test",
+            guest_system="x86_64-linux",
+            emulator="qemu-test",
+            program="bin/qemu-x86_64",
+            expected_validation="mismatch",
+        )
+        return directory, document, case
+
+    def test_native_oracle_identity_requires_explicit_producer_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory, good, case = self._native_bundle_fixture(root)
+            path = directory / "metadata.json"
+            path.write_text(json.dumps(good))
+            self.assertEqual(
+                evaluation._native_trigger_artifacts(root, case, 0)[3], "msgpack"
+            )
+            mutations = []
+            for field, bad in (
+                ("schema", "unknown"),
+                ("role", "qemu"),
+                ("system", "aarch64-linux"),
+                ("machine", "arm64"),
+                ("traceFormat", "yaml"),
+            ):
+                for value in (None, bad):
+                    doc = deepcopy(good)
+                    if value is None:
+                        del doc[field]
+                    else:
+                        doc[field] = value
+                    mutations.append(doc)
+            for level in ("case", "iteration"):
+                for value in (None, "application"):
+                    doc = deepcopy(good)
+                    target = doc["cases"]["test"]
+                    if level == "iteration":
+                        target = target["iterations"][0]
+                    if value is None:
+                        del target["kind"]
+                    else:
+                        target["kind"] = value
+                    mutations.append(doc)
+            for field in ("binarySha256", "oracleSha256", "traceFormat"):
+                for value in (None, "", 123, "0" * 64, "json"):
+                    doc = deepcopy(good)
+                    target = doc["cases"]["test"]["iterations"][0]
+                    if value is None:
+                        del target[field]
+                    else:
+                        target[field] = value
+                    mutations.append(doc)
+            for index, doc in enumerate(mutations):
+                with self.subTest(index=index):
+                    path.write_text(json.dumps(doc))
+                    with self.assertRaises(evaluation.EvaluationError):
+                        evaluation._native_trigger_artifacts(root, case, 0)
+
+    def test_native_oracle_paths_reject_escape_and_allow_bundle_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory, document, case = self._native_bundle_fixture(root / "original")
+            path = directory / "metadata.json"
+            path.write_text(json.dumps(document))
+            relocated = root / "relocated"
+            (relocated / "native").mkdir(parents=True)
+            (relocated / "native/x86_64-linux").symlink_to(
+                directory, target_is_directory=True
+            )
+            self.assertEqual(
+                evaluation._native_trigger_artifacts(relocated, case, 0)[0],
+                directory / "binary",
+            )
+            outside = directory.parent / "outside"
+            outside.write_bytes(b"binary")
+            (directory / "escape").symlink_to(outside)
+            for field in ("binary", "oracle"):
+                for value in (str(directory / "binary"), "../outside", "escape"):
+                    with self.subTest(field=field, value=value):
+                        changed = deepcopy(document)
+                        changed["cases"]["test"]["iterations"][0][field] = value
+                        path.write_text(json.dumps(changed))
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation._native_trigger_artifacts(relocated, case, 0)
+
+    def test_application_oracle_requires_producer_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory, document, case = self._native_bundle_fixture(root)
+            workload = root / "input.sql"
+            workload.write_text("select 1;")
+            (directory / "rr").mkdir()
+            (directory / "rr/events").write_bytes(b"events")
+            selected = document["cases"]["test"]
+            selected["kind"] = "application"
+            item = selected["iterations"][0]
+            item.update(
+                kind="application",
+                injectedBinary="binary",
+                injectedBinarySha256=item["binarySha256"],
+                workloadKind="sqlite",
+                workloadSha256=evaluation._sha256(workload),
+                traceMode="selective",
+                rrTrace="rr",
+                argv=["evaluation.db"],
+                startAddress=1,
+                stopAddress=2,
+            )
+            case = replace(
+                case,
+                kind="application",
+                workload=workload,
+                workload_kind="sqlite",
+                trace_mode="selective",
+            )
+            path = directory / "metadata.json"
+            path.write_text(json.dumps(document))
+            evaluation._native_application_artifacts(root, case, 0, root / "case")
+            for value in (None, "", False, "0" * 64):
+                changed = deepcopy(document)
+                target = changed["cases"]["test"]["iterations"][0]
+                if value is None:
+                    del target["oracleSha256"]
+                else:
+                    target["oracleSha256"] = value
+                path.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(evaluation.EvaluationError, "oracleSha256"):
+                    evaluation._native_application_artifacts(
+                        root, case, 0, root / "invalid"
+                    )
+
+    def test_plugin_reference_acceptance_needs_no_mismatch_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self._gdb_trigger_configuration(root)
+            document = json.loads(path.read_text())
+            document["emulators"]["qemu-test"]["backend"] = "qemu-plugin"
+            encoded = document["emulatorCases"]["qemu-test"]
+            encoded["expectedValidation"] = "accepted"
+            for name in list(encoded):
+                if name.startswith("expectedMismatch"):
+                    del encoded[name]
+            path.write_text(json.dumps(document))
+            config = evaluation.load_config(path)
+            case = config.emulator_cases["qemu-test"]
+            self.assertIsNone(case.expected_mismatch_source_symbol)
+            binary, oracle = root / "binary", root / "oracle"
+            binary.write_bytes(b"binary")
+            oracle.write_bytes(b"oracle")
+            (root / "lib/plugins").mkdir(parents=True)
+            (root / "lib/plugins/libfocaccia.so").write_bytes(b"plugin")
+            trace = {
+                "available": True,
+                "complete": True,
+                "terminal_reached": True,
+                "state_count": 3,
+                "transform_count": 2,
+            }
+            completion = {
+                "scope": "whole-program",
+                "complete": True,
+                "ordinary_prefix_complete": True,
+                "expected_completion_available": True,
+                "observed_completion_available": True,
+                "final_live_boundary_bound": True,
+                "execution_complete": True,
+                "full_run_timing_eligible": True,
+                "terminal_action": "match",
+                "terminal_outcome": "match",
+            }
+            for field in (
+                "scope",
+                "expected_completion_available",
+                "observed_completion_available",
+                "final_live_boundary_bound",
+                "execution_complete",
+                "full_run_timing_eligible",
+                "terminal_action",
+                "terminal_outcome",
+            ):
+                incomplete_completion = dict(completion)
+                del incomplete_completion[field]
+                with self.subTest(missing_plugin_completion_field=field):
+                    with self.assertRaises(evaluation.EvaluationError):
+                        evaluation._require_plugin_terminal_provenance(
+                            {"trace": trace, "completion": incomplete_completion}
+                        )
+            for index, (status, guest_status, complete) in enumerate(
+                (
+                    ("accepted", 0, True),
+                    ("accepted", 1, True),
+                    ("mismatch", 0, True),
+                    ("accepted", 0, False),
+                )
+            ):
+                directory = root / f"case-{index}"
+                directory.mkdir()
+                (directory / "validation.json").write_text(
+                    json.dumps(
+                        {
+                            "schema": "focaccia-qemu-validation-v1",
+                            "status": status,
+                            "trace": {**trace, "complete": complete},
+                            "completion": completion,
+                        }
+                    )
+                )
+                (directory / "profile.json").write_text("{}")
+                validator, guest = mock.MagicMock(), mock.MagicMock()
+                validator.__enter__.return_value.wait.return_value = 0
+                guest_process = guest.__enter__.return_value
+                guest_process.pid = 1234
+                guest_process.wait.return_value = guest_status
+                (directory / "plugin-terminal-ready.json").write_text(
+                    json.dumps(
+                        {
+                            "schema": "focaccia-plugin-terminal-ready-v1",
+                            "nonce": "fixture-nonce",
+                            "pid": 1234,
+                            "binarySha256": evaluation._sha256(binary),
+                        }
+                    )
+                )
+                with (
+                    mock.patch.object(
+                        evaluation,
+                        "_native_trigger_artifacts",
+                        return_value=(
+                            binary,
+                            oracle,
+                            0,
+                            "msgpack",
+                            {"startAddress": 0x1000, "stopAddress": 0x1008},
+                        ),
+                    ),
+                    mock.patch.object(
+                        evaluation,
+                        "read_symbols",
+                        return_value={
+                            "focaccia_trace_start": 0x1000,
+                            "focaccia_trace_stop": 0x1008,
+                        },
+                    ),
+                    mock.patch.object(
+                        evaluation, "ManagedProcess", side_effect=[validator, guest]
+                    ),
+                    mock.patch.object(Path, "is_socket", return_value=True),
+                    mock.patch.object(Path, "unlink", return_value=None),
+                    mock.patch.object(
+                        evaluation, "_expected_register_mismatch"
+                    ) as localization,
+                    mock.patch.object(
+                        evaluation, "_qemu_profile_rows", return_value=([], {})
+                    ) as timings,
+                ):
+                    if complete:
+                        _, metadata, passed = evaluation._evaluate_qemu_plugin_trigger(
+                            config,
+                            case,
+                            config.emulators[case.emulator],
+                            root / "qemu",
+                            root,
+                            0,
+                            directory,
+                        )
+                        self.assertEqual(passed, index == 0)
+                        self.assertIsNone(metadata["expectedMismatchLocalized"])
+                    else:
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation._evaluate_qemu_plugin_trigger(
+                                config,
+                                case,
+                                config.emulators[case.emulator],
+                                root / "qemu",
+                                root,
+                                0,
+                                directory,
+                            )
+                    localization.assert_not_called()
+                    self.assertEqual(timings.call_count, int(index == 0))
+
+    def test_trigger_mismatch_contract_rejects_missing_and_invalid_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self._gdb_trigger_configuration(root)
+            good = json.loads(path.read_text())
+            evaluation.load_config(path)
+            bad_values = {
+                "expectedMismatchSourceSymbol": [None, "", False, 1, []],
+                "expectedMismatchSourceOffset": [None, True, -1, 1 << 64, 0.5, "0", []],
+                "expectedMismatchLength": [None, False, 0, -1, 1 << 64, 1.5, "5", {}],
+                "expectedMismatchCode": [None, "", "unexpected-guest-signal", [], {}],
+                "expectedMismatchSubject": [None, "", 1, False, []],
+            }
+            for key, values in bad_values.items():
+                for value in [*values, "missing"]:
+                    with self.subTest(key=key, value=value):
+                        document = deepcopy(good)
+                        case = document["emulatorCases"]["qemu-test"]
+                        if value == "missing":
+                            del case[key]
+                        else:
+                            case[key] = value
+                        path.write_text(json.dumps(document))
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation.load_config(path)
+            for subject in (None, "0x123abc"):
+                path = self._gdb_trigger_configuration(
+                    root,
+                    expectedMismatchCode="memory-content-mismatch",
+                    expectedMismatchSubject=subject,
+                )
+                evaluation.load_config(path)
+            for subject in (
+                "",
+                "RAX",
+                123,
+                False,
+                [],
+                "0x10000000000000000",
+                "0x" + "0" * 100,
+            ):
+                path = self._gdb_trigger_configuration(
+                    root,
+                    expectedMismatchCode="memory-content-mismatch",
+                    expectedMismatchSubject=subject,
+                )
+                with self.assertRaises(evaluation.EvaluationError):
+                    evaluation.load_config(path)
+
+    def test_trigger_mismatch_rejects_address_overflow_before_qemu(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = evaluation.load_config(self._gdb_trigger_configuration(root))
+            case = config.emulator_cases["qemu-test"]
+            for symbol, offset, length in (
+                (-1, 0, 4),
+                (True, 0, 4),
+                ("0x401000", 0, 4),
+                (None, 0, 4),
+                (1 << 64, 0, 4),
+                ((1 << 64) - 1, 1, 4),
+                ((1 << 64) - 4, 0, 4),
+            ):
+                with (
+                    self.subTest(symbol=symbol, offset=offset, length=length),
+                    mock.patch.object(
+                        evaluation,
+                        "_native_trigger_artifacts",
+                        return_value=(
+                            root / "binary",
+                            root / "oracle",
+                            0,
+                            "msgpack",
+                            {},
+                        ),
+                    ),
+                    mock.patch.object(
+                        evaluation,
+                        "read_symbols",
+                        return_value={"focaccia_trace_start": symbol},
+                    ),
+                    mock.patch.object(evaluation, "ManagedProcess") as qemu,
+                    mock.patch.object(evaluation, "_free_loopback_port") as port,
+                ):
+                    with self.assertRaises(evaluation.EvaluationError):
+                        evaluation._evaluate_qemu_trigger(
+                            config,
+                            replace(
+                                case,
+                                expected_mismatch_source_offset=offset,
+                                expected_mismatch_length=length,
+                            ),
+                            config.emulators[case.emulator],
+                            root / "qemu",
+                            root,
+                            0,
+                            root / "invalid",
+                        )
+                    qemu.assert_not_called()
+                    port.assert_not_called()
+
+    def test_trigger_mismatch_requires_exact_localization_before_timings(self):
+        report = {
+            "schema": "focaccia-qemu-validation-v1",
+            "status": "mismatch",
+            "validation": {
+                "entries": [
+                    {
+                        "transition_range": [0x401017, 0x40101C],
+                        "errors": [
+                            {
+                                "severity": "confirmed",
+                                "code": "register-content-mismatch",
+                                "subject": "CF",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+        variants = [("exact", report, True)]
+        for key, value in (
+            ("subject", "RAX"),
+            ("subject", None),
+            ("severity", "unconfirmed"),
+            ("severity", "incomplete"),
+            ("code", None),
+            ("code", "memory-content-mismatch"),
+        ):
+            changed = deepcopy(report)
+            changed["validation"]["entries"][0]["errors"][0][key] = value
+            variants.append((f"{key}-{value}", changed, False))
+        for bounds in (
+            [0x400000, 0x400005],
+            [0x401017, 0x40101D],
+            [0x401018, 0x40101C],
+            [0x401017],
+            None,
+        ):
+            changed = deepcopy(report)
+            changed["validation"]["entries"][0]["transition_range"] = bounds
+            variants.append((f"range-{bounds}", changed, False))
+        variants.extend(
+            [
+                (
+                    "aggregate-only",
+                    {"schema": report["schema"], "status": "mismatch"},
+                    False,
+                ),
+                ("empty", {**report, "validation": {"entries": []}}, False),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = evaluation.load_config(self._gdb_trigger_configuration(root))
+            case = config.emulator_cases["qemu-test"]
+            binary, oracle = root / "binary", root / "oracle"
+            binary.write_bytes(b"binary")
+            oracle.write_bytes(b"oracle")
+            for name, candidate, expected in variants:
+                with self.subTest(name=name):
+                    directory = root / name
+                    directory.mkdir()
+                    (directory / "validation.json").write_text(json.dumps(candidate))
+                    (directory / "profile.json").write_text("{}")
+                    with (
+                        mock.patch.object(
+                            evaluation,
+                            "_native_trigger_artifacts",
+                            return_value=(binary, oracle, 0, "msgpack", {}),
+                        ),
+                        mock.patch.object(
+                            evaluation,
+                            "read_symbols",
+                            return_value={"focaccia_trace_start": 0x401000},
+                        ),
+                        mock.patch.object(
+                            evaluation, "_free_loopback_port", return_value=1234
+                        ),
+                        mock.patch.object(evaluation, "ManagedProcess"),
+                        mock.patch.object(evaluation, "_wait_for_listener"),
+                        mock.patch.object(
+                            evaluation,
+                            "run_process",
+                            return_value=mock.Mock(returncode=0, output=""),
+                        ),
+                        mock.patch.object(
+                            evaluation,
+                            "_qemu_profile_rows",
+                            return_value=(
+                                [{"seconds": "10", "status": "passed"}],
+                                {"totalSeconds": 10},
+                            ),
+                        ) as timings,
+                    ):
+                        rows, metadata, passed = evaluation._evaluate_qemu_trigger(
+                            config,
+                            case,
+                            config.emulators[case.emulator],
+                            root / "qemu",
+                            root,
+                            0,
+                            directory,
+                        )
+                    self.assertEqual(passed, expected)
+                    self.assertEqual(metadata["expectedMismatchLocalized"], expected)
+                    self.assertEqual(
+                        metadata["expectedMismatchRange"], [0x401017, 0x40101C]
+                    )
+                    self.assertEqual(timings.call_count, int(expected))
+                    if not expected:
+                        self.assertEqual(metadata["profileTimings"], {})
+                        self.assertIsNone(metadata["profileSha256"])
+                        self.assertTrue(
+                            all(
+                                row["status"] == "failed" and row["seconds"] == ""
+                                for row in rows
+                            )
+                        )
+            with mock.patch.object(
+                evaluation, "_native_trigger_artifacts"
+            ) as artifacts:
+                with self.assertRaises(evaluation.EvaluationError):
+                    evaluation._evaluate_qemu_trigger(
+                        config,
+                        replace(case, expected_mismatch_length=None),
+                        config.emulators[case.emulator],
+                        root / "qemu",
+                        root,
+                        0,
+                        root / "invalid",
+                    )
+                artifacts.assert_not_called()
+
+    def test_trigger_memory_mismatch_requires_structured_address(self):
+        for subject in (
+            "0x4000800bc0",
+            "0x5500800bcf",
+            None,
+            "",
+            123,
+            "RAX",
+            "memory",
+            "0x",
+            "0x10000000000000000",
+            "0x" + "0" * 100,
+            False,
+        ):
+            with self.subTest(subject=subject):
+                report = {
+                    "validation": {
+                        "entries": [
+                            {
+                                "transition_range": [0x40106A, 0x401072],
+                                "errors": [
+                                    {
+                                        "severity": "confirmed",
+                                        "code": "memory-content-mismatch",
+                                        "subject": subject,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+                self.assertEqual(
+                    evaluation._expected_trigger_mismatch(
+                        report, 0x40106A, 0x401072, "memory-content-mismatch", None
+                    ),
+                    subject in ("0x4000800bc0", "0x5500800bcf"),
+                )
+                self.assertFalse(
+                    evaluation._expected_trigger_mismatch(
+                        report, 0x40106A, 0x40106E, "memory-content-mismatch", None
+                    )
+                )
+                report["validation"]["entries"][0]["errors"][0]["code"] = None
+                self.assertFalse(
+                    evaluation._expected_trigger_mismatch(
+                        report, 0x40106A, 0x401072, "memory-content-mismatch", None
+                    )
+                )
+
+    def test_trigger_reference_requires_terminal_completion_before_timings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = evaluation.load_config(self._gdb_trigger_configuration(root))
+            case = replace(
+                config.emulator_cases["qemu-test"], expected_validation="accepted"
+            )
+            binary, oracle = root / "binary", root / "oracle"
+            binary.write_bytes(b"binary")
+            oracle.write_bytes(b"oracle")
+            trace = {
+                "available": True,
+                "complete": True,
+                "terminal_reached": True,
+                "state_count": 3,
+                "transform_count": 2,
+            }
+            for index, candidate in enumerate(
+                (
+                    trace,
+                    {},
+                    {**trace, "terminal_reached": False},
+                    {**trace, "state_count": 2},
+                )
+            ):
+                directory = root / str(index)
+                directory.mkdir()
+                (directory / "validation.json").write_text(
+                    json.dumps(
+                        {
+                            "schema": "focaccia-qemu-validation-v1",
+                            "status": "accepted",
+                            "trace": candidate,
+                        }
+                    )
+                )
+                (directory / "profile.json").write_text("{}")
+                with (
+                    mock.patch.object(
+                        evaluation,
+                        "_native_trigger_artifacts",
+                        return_value=(binary, oracle, 0, "msgpack", {}),
+                    ),
+                    mock.patch.object(
+                        evaluation, "_free_loopback_port", return_value=1234
+                    ),
+                    mock.patch.object(evaluation, "ManagedProcess"),
+                    mock.patch.object(evaluation, "_wait_for_listener"),
+                    mock.patch.object(
+                        evaluation,
+                        "run_process",
+                        return_value=mock.Mock(returncode=0, output=""),
+                    ),
+                    mock.patch.object(
+                        evaluation, "_qemu_profile_rows", return_value=([], {})
+                    ) as timings,
+                ):
+                    if index == 0:
+                        self.assertTrue(
+                            evaluation._evaluate_qemu_trigger(
+                                config,
+                                case,
+                                config.emulators[case.emulator],
+                                root / "qemu",
+                                root,
+                                0,
+                                directory,
+                            )[2]
+                        )
+                        timings.assert_called_once()
+                    else:
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation._evaluate_qemu_trigger(
+                                config,
+                                case,
+                                config.emulators[case.emulator],
+                                root / "qemu",
+                                root,
+                                0,
+                                directory,
+                            )
+                        timings.assert_not_called()
+
+    def test_whole_program_completion_without_witness_stop_pc(self):
+        # Representative projection of retained river-full-curl-001 validation.json.
+        report = {
+            "completion": {
+                "complete": True,
+                "expected_completion_available": True,
+                "final_live_boundary_bound": True,
+                "full_run_timing_eligible": True,
+                "observed_completion_available": True,
+                "ordinary_prefix_complete": True,
+                "scope": "whole-program",
+                "terminal_action": "match",
+                "terminal_outcome": "match",
+            },
+            "trace": {
+                "available": True,
+                "complete": True,
+                "expected_terminal_pc": None,
+                "state_count": 374273,
+                "terminal_pc": 5046004,
+                "terminal_reached": False,
+                "transform_count": 374272,
+            },
+        }
+        evaluation._require_whole_program_completion(report)
+        with self.assertRaises(evaluation.EvaluationError):
+            evaluation._require_complete_terminal_trace(report)
+        for section, fields in (
+            ("completion", tuple(report["completion"])),
+            ("trace", ("available", "complete", "state_count", "transform_count")),
+        ):
+            for field in fields:
+                for value in (None, False, 1, "unknown"):
+                    with self.subTest(section=section, field=field, value=value):
+                        mutated = {**report, section: {**report[section], field: value}}
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation._require_whole_program_completion(mutated)
+                mutated = {**report, section: dict(report[section])}
+                del mutated[section][field]
+                with self.assertRaises(evaluation.EvaluationError):
+                    evaluation._require_whole_program_completion(mutated)
+
+    def test_full_application_requires_completion_before_timings(self):
+        complete = {
+            "scope": "whole-program",
+            "ordinary_prefix_complete": True,
+            "complete": True,
+            "full_run_timing_eligible": True,
+            "expected_completion_available": True,
+            "observed_completion_available": True,
+            "final_live_boundary_bound": True,
+            "terminal_action": "match",
+            "terminal_outcome": "match",
+        }
+        candidates = (
+            ("full", complete, True),
+            ("missing", None, False),
+            ("prefix-only", {"ordinary_prefix_complete": True}, False),
+            ("wrong-scope", {**complete, "scope": "selective"}, False),
+            ("partial", {**complete, "complete": False}, False),
+            ("ineligible", {**complete, "full_run_timing_eligible": False}, False),
+            ("non-boolean", {**complete, "complete": 1}, False),
+            ("selective", None, True),
+            ("wrong-localization", complete, False),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = evaluation.load_config(self._gdb_trigger_configuration(root))
+            artifact = root / "artifact"
+            artifact.write_bytes(b"fixture")
+            artifacts = evaluation.NativeApplicationArtifacts(
+                artifact,
+                artifact,
+                artifact,
+                artifact,
+                (),
+                "msgpack",
+                {"stopAddress": 0x402000},
+            )
+            prepared = evaluation.PreparedApplication(
+                root, (), None, None, None, False, False
+            )
+            for expectation in ("accepted", "mismatch"):
+                for name, completion, eligible in candidates:
+                    with self.subTest(expectation=expectation, completion=name):
+                        case = replace(
+                            config.emulator_cases["qemu-test"],
+                            kind="application",
+                            trace_mode="selective" if name == "selective" else "full",
+                            expected_validation=expectation,
+                            expected_mismatch_source_symbol="injection",
+                            expected_mismatch_subject="CF",
+                        )
+                        directory = root / f"{expectation}-{name}"
+                        directory.mkdir()
+                        for filename in (
+                            "replay-preflight.json",
+                            "run-manifest.json",
+                            "profile.json",
+                        ):
+                            (directory / filename).write_text("{}")
+                        report = {
+                            "schema": "focaccia-qemu-validation-v1",
+                            "status": expectation,
+                            "trace": {
+                                "available": True,
+                                "complete": True,
+                                "terminal_reached": name == "selective",
+                                "expected_terminal_pc": None,
+                                "state_count": 3,
+                                "transform_count": 2,
+                            },
+                            "replay": {
+                                "active": True,
+                                "record_count": 6,
+                                "by_outcome": {"applied": 6},
+                            },
+                            "validation": {
+                                "diagnostics": [],
+                                "diagnostic_counts": {},
+                                "severity_counts": {"confirmed": 1},
+                                "entries": [
+                                    {
+                                        "transition_range": [0x401000, 0x402000],
+                                        "errors": [
+                                            {
+                                                "severity": "confirmed",
+                                                "code": "register-content-mismatch",
+                                                "subject": "RAX"
+                                                if name == "wrong-localization"
+                                                else "CF",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            },
+                        }
+                        if expectation == "accepted" and name == "selective":
+                            report["validation"] = {
+                                "entries": [],
+                                "diagnostics": [],
+                                "severity_counts": {},
+                                "diagnostic_counts": {},
+                            }
+                        if completion is not None:
+                            report["completion"] = completion
+                        (directory / "validation.json").write_text(json.dumps(report))
+                        with (
+                            mock.patch.object(
+                                evaluation,
+                                "_native_application_artifacts",
+                                return_value=artifacts,
+                            ),
+                            mock.patch.object(
+                                evaluation,
+                                "_prepare_qemu_application",
+                                return_value=prepared,
+                            ),
+                            mock.patch.object(
+                                evaluation, "_free_loopback_port", return_value=1234
+                            ),
+                            mock.patch.object(evaluation, "ManagedProcess"),
+                            mock.patch.object(evaluation, "_wait_for_listener"),
+                            mock.patch.object(
+                                evaluation,
+                                "run_process",
+                                return_value=mock.Mock(returncode=0, output=""),
+                            ),
+                            mock.patch.object(
+                                evaluation,
+                                "read_symbols",
+                                return_value={"injection": 0x401000},
+                            ),
+                            mock.patch.object(
+                                evaluation, "_qemu_profile_rows", return_value=([], {})
+                            ) as timings,
+                        ):
+
+                            def consume():
+                                return evaluation._evaluate_qemu_application(
+                                    config,
+                                    case,
+                                    config.emulators[case.emulator],
+                                    root / "qemu",
+                                    root,
+                                    0,
+                                    directory,
+                                )
+
+                            if name == "wrong-localization":
+                                self.assertEqual(
+                                    consume()[2], expectation == "accepted"
+                                )
+                            elif eligible:
+                                self.assertTrue(consume()[2])
+                            else:
+                                with self.assertRaisesRegex(
+                                    evaluation.EvaluationError,
+                                    "whole-program completion",
+                                ):
+                                    consume()
+                            if eligible or (
+                                name == "wrong-localization"
+                                and expectation == "accepted"
+                            ):
+                                timings.assert_called_once()
+                            else:
+                                timings.assert_not_called()
 
     def test_application_mismatch_requires_exact_localized_classification(self):
         expected = {
@@ -236,6 +1156,166 @@ class EvaluationTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(evaluation.EvaluationError, "timing fields"):
                 evaluation.load_component_timings(profile)
+
+    def test_marker_free_trigger_capture_uses_whole_program(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            binary = self._write_executable(root / "unannotated", "#!/bin/sh\nexit 0\n")
+            capture = self._fake_capture(root / "capture")
+            path = self._write_config(
+                root,
+                capture=capture,
+                nm=root / "must-not-run-nm",
+                rr=capture,
+                triggers={"test": {"binary": str(binary), "expectedStatus": 0}},
+                trigger_trace_mode="whole-program",
+            )
+            document = json.loads(path.read_text())
+            del document["triggerTraceMode"]
+            path.write_text(json.dumps(document))
+            config = evaluation.load_config(path)
+            self.assertEqual(config.trigger_trace_mode, "whole-program")
+            output = root / "native"
+            with mock.patch.object(
+                evaluation, "read_symbols", side_effect=AssertionError("symbol lookup")
+            ):
+                _, metadata, passed = evaluation.evaluate_trigger(
+                    config, config.triggers["test"], 0, output, "json"
+                )
+            self.assertTrue(passed)
+            self.assertEqual(metadata["traceMode"], "whole-program")
+            self.assertNotIn("startAddress", metadata)
+            self.assertNotIn("stopAddress", metadata)
+            command = (output / "logs/test-0-capture.log").read_text()
+            self.assertIn("--whole-program", command)
+            self.assertNotIn("--start-address", command)
+            self.assertNotIn("--stop-address", command)
+
+    def test_marker_free_trigger_consumer_rejects_truncated_and_legacy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self._gdb_trigger_configuration(root)
+            document = json.loads(path.read_text())
+            document["triggerTraceMode"] = "whole-program"
+            contract = document["emulatorCases"]["qemu-test"]
+            contract.pop("expectedMismatchSourceSymbol")
+            contract.pop("expectedMismatchSourceOffset")
+            contract["expectedMismatchSourceAddress"] = 0x401017
+            path.write_text(json.dumps(document))
+            config = evaluation.load_config(path)
+            case = config.emulator_cases["qemu-test"]
+            binary, oracle = root / "binary", root / "oracle"
+            binary.write_bytes(b"binary")
+            oracle.write_bytes(b"oracle")
+            report = {
+                "schema": "focaccia-qemu-validation-v1",
+                "status": "mismatch",
+                "trace": {
+                    "available": True,
+                    "complete": True,
+                    "state_count": 3,
+                    "transform_count": 2,
+                },
+                "completion": {
+                    "scope": "whole-program",
+                    "complete": True,
+                    "full_run_timing_eligible": True,
+                    "expected_completion_available": True,
+                    "observed_completion_available": True,
+                    "ordinary_prefix_complete": True,
+                    "final_live_boundary_bound": True,
+                    "terminal_action": "match",
+                    "terminal_outcome": "match",
+                },
+                "validation": {
+                    "severity_counts": {"confirmed": 1},
+                    "diagnostic_counts": {},
+                    "entries": [
+                        {
+                            "transition_range": [0x401017, 0x40101C],
+                            "errors": [
+                                {
+                                    "severity": "confirmed",
+                                    "code": "register-content-mismatch",
+                                    "subject": "CF",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+            for mode in ("complete", "truncated", "legacy", "wrong-location"):
+                directory = root / mode
+                directory.mkdir()
+                candidate = deepcopy(report)
+                if mode == "truncated":
+                    candidate["completion"]["ordinary_prefix_complete"] = False
+                    candidate["completion"]["observed_completion_available"] = False
+                    candidate["completion"]["final_live_boundary_bound"] = False
+                if mode == "wrong-location":
+                    candidate["validation"]["entries"][0]["transition_range"] = [1, 2]
+                (directory / "validation.json").write_text(json.dumps(candidate))
+                (directory / "profile.json").write_text("{}")
+                native = {} if mode == "legacy" else {"traceMode": "whole-program"}
+                with (
+                    self.subTest(mode=mode),
+                    mock.patch.object(
+                        evaluation,
+                        "_native_trigger_artifacts",
+                        return_value=(binary, oracle, 0, "json", native),
+                    ),
+                    mock.patch.object(
+                        evaluation,
+                        "read_symbols",
+                        side_effect=AssertionError("symbol lookup"),
+                    ),
+                    mock.patch.object(
+                        evaluation, "_free_loopback_port", return_value=1234
+                    ),
+                    mock.patch.object(evaluation, "ManagedProcess"),
+                    mock.patch.object(evaluation, "_wait_for_listener"),
+                    mock.patch.object(
+                        evaluation,
+                        "run_process",
+                        return_value=mock.Mock(returncode=0, output=""),
+                    ) as run,
+                    mock.patch.object(
+                        evaluation,
+                        "_qemu_profile_rows",
+                        return_value=(
+                            [{"seconds": "10", "status": "passed"}],
+                            {"totalSeconds": 10},
+                        ),
+                    ) as timings,
+                ):
+                    if mode in {"truncated", "legacy"}:
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation._evaluate_qemu_trigger(
+                                config,
+                                case,
+                                config.emulators[case.emulator],
+                                root / "qemu",
+                                root,
+                                0,
+                                directory,
+                            )
+                        timings.assert_not_called()
+                    else:
+                        _, _, passed = evaluation._evaluate_qemu_trigger(
+                            config,
+                            case,
+                            config.emulators[case.emulator],
+                            root / "qemu",
+                            root,
+                            0,
+                            directory,
+                        )
+                        self.assertEqual(passed, mode == "complete")
+                    if run.called:
+                        command = run.call_args.args[0]
+                        self.assertNotIn("--cutpoint-address", command)
+                        self.assertNotIn("0x401017", command)
+                        self.assertNotIn("0x40101c", command)
 
     def test_native_capture_timeout_allows_large_trace_serialization(self):
         self.assertEqual(evaluation.CAPTURE_TIMEOUT_SECONDS, 120 * 60)
@@ -548,6 +1628,10 @@ class EvaluationTests(unittest.TestCase):
             )
             self.assertEqual(len(application_metadata["profileSha256"]), 64)
             self.assertEqual(application_metadata["traceFormat"], "msgpack")
+            self.assertEqual(
+                application_metadata["oracleSha256"],
+                evaluation._sha256(system_directory / application_metadata["oracle"]),
+            )
             self.assertEqual(application_metadata["traceSeconds"], 7.0)
             self.assertEqual(application_metadata["serializationSeconds"], 11.0)
             capture_log = (system_directory / "logs/sqlite-0-capture.log").read_text()
@@ -555,6 +1639,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertIn("--profile-report", capture_log)
             self.assertIn("--out-type msgpack", capture_log)
             self.assertNotIn("--cross-validate", capture_log)
+            self.assertNotIn("--whole-program", capture_log)
             with (system_directory / "results.csv").open(newline="") as result_file:
                 rows = list(csv.DictReader(result_file))
             self.assertEqual(
@@ -650,6 +1735,11 @@ class EvaluationTests(unittest.TestCase):
             ).read_text()
             self.assertIn("--cross-validate", cross_log)
             self.assertNotIn("--cross-validate", speculative_log)
+            for capture_log in (cross_log, speculative_log):
+                self.assertIn("--whole-program", capture_log)
+                self.assertNotIn("--start-address", capture_log)
+                self.assertNotIn("--stop-address", capture_log)
+                self.assertNotIn("--skip-unmatched", capture_log)
             metadata = json.loads((system_directory / "metadata.json").read_text())
             iteration = metadata["cases"]["curl-full"]["iterations"][0]
             self.assertEqual(iteration["traceMode"], "full")
@@ -713,7 +1803,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(lua_plan.deliver_sigint)
             self.assertIsNone(lua_plan.server_root)
 
-    def test_box64_emulated_role_consumes_native_oracle_and_structured_report(self):
+    def test_box64_whole_program_binds_process_completion_and_structured_report(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             input_directory = root / "run"
@@ -750,12 +1840,13 @@ class EvaluationTests(unittest.TestCase):
                 )
             )
 
+            self._complete_native_fixture_identity(native_directory)
             emulator_output = root / "box64-output"
             (emulator_output / "bin").mkdir(parents=True)
             self._write_executable(
                 emulator_output / "bin/box64",
                 "#!/bin/sh\n"
-                'test "$BOX64_TRACE" = 0x401000-0x401011 || exit 8\n'
+                'test "$BOX64_TRACE" = 1 || exit 8\n'
                 'test "$BOX64_TRACE_FILE" = stderr || exit 8\n'
                 'test "$BOX64_DYNAREC_TRACE" = 1 || exit 8\n'
                 "printf '%s\\n' 'ES=0 RAX=1 RIP=401000'\n"
@@ -772,7 +1863,7 @@ class EvaluationTests(unittest.TestCase):
                 'test "$trace_type" = msgpack || exit 9\n'
                 "printf '%s\\n' "
                 '\'{"schema":"focaccia-offline-validation-v1",\''
-                '\'"status":"mismatch"}\' > "$report"\n',
+                '\'"status":"mismatch","completion":{"executionComplete":true}}\' > "$report"\n',
             )
             unused = self._write_executable(root / "unused", "#!/bin/sh\nexit 0\n")
             config = self._write_config(
@@ -789,6 +1880,7 @@ class EvaluationTests(unittest.TestCase):
                         "version": "0.3.8",
                     }
                 },
+                trigger_trace_mode="whole-program",
                 emulator_cases={
                     "box64-508": {
                         "kind": "trigger",
@@ -824,8 +1916,17 @@ class EvaluationTests(unittest.TestCase):
                 metadata["cases"]["box64-508"]["backend"],
                 "box64-log",
             )
-            report = system_directory / "box64-log/box64-0-3-8/508/0/validation.json"
+            case_root = system_directory / "box64-log/box64-0-3-8/508/0"
+            report = case_root / "validation.json"
             self.assertTrue(report.is_file())
+            evidence = json.loads((case_root / "execution-evidence.json").read_text())
+            self.assertEqual(evidence["schema"], "focaccia-text-process-evidence-v1")
+            self.assertEqual(evidence["processState"], "exited")
+            self.assertEqual(evidence["exitStatus"], 0)
+            self.assertEqual(
+                metadata["cases"]["box64-508"]["iterations"][0]["executionComplete"],
+                True,
+            )
             with (system_directory / "results.csv").open(newline="") as result_file:
                 rows = list(csv.DictReader(result_file))
             self.assertEqual(
@@ -868,6 +1969,7 @@ class EvaluationTests(unittest.TestCase):
                 )
             )
 
+            self._complete_native_fixture_identity(native_directory)
             emulator_output = root / "qemu-output"
             (emulator_output / "bin").mkdir(parents=True)
             self._write_executable(
@@ -896,7 +1998,10 @@ class EvaluationTests(unittest.TestCase):
                 'test "$cutpoint" = 0x401020 || exit 10\n'
                 "printf '%s\\n' "
                 '\'{"schema":"focaccia-qemu-validation-v1",\''
-                '\'"status":"mismatch"}\' > "$report"\n'
+                '\'"status":"mismatch","validation":{"entries":[{\''
+                '\'"transition_range":[4198400,4198404],"errors":[{\''
+                '\'"severity":"confirmed","code":"memory-content-mismatch",\''
+                '\'"subject":"0x5500800bcf"}]}]}}\' > "$report"\n'
                 "printf '%s\\n' "
                 '\'{"schema":"focaccia-qemu-validation-profile-v1",\''
                 '\'"status":"passed","timings":{\''
@@ -906,10 +2011,14 @@ class EvaluationTests(unittest.TestCase):
                 "printf '%s\\n' states > \"$output\"\n",
             )
             unused = self._write_executable(root / "unused", "#!/bin/sh\nexit 0\n")
+            nm = self._write_executable(
+                root / "nm",
+                "#!/bin/sh\nprintf '0000000000401000 T focaccia_trace_start\\n'\n",
+            )
             config = self._write_config(
                 root,
                 capture=unused,
-                nm=unused,
+                nm=nm,
                 rr=unused,
                 role="qemu",
                 validate_qemu=validate_qemu,
@@ -929,6 +2038,10 @@ class EvaluationTests(unittest.TestCase):
                         "program": "bin/qemu-aarch64",
                         "expectedValidation": "mismatch",
                         "validationCutpoint": "stop",
+                        "expectedMismatchSourceSymbol": "focaccia_trace_start",
+                        "expectedMismatchSourceOffset": 0,
+                        "expectedMismatchLength": 4,
+                        "expectedMismatchCode": "memory-content-mismatch",
                     }
                 },
             )
@@ -1016,6 +2129,7 @@ class EvaluationTests(unittest.TestCase):
                 )
             )
 
+            self._complete_native_fixture_identity(native_directory)
             emulator_output = root / "qemu-plugin-output"
             (emulator_output / "bin").mkdir(parents=True)
             (emulator_output / "lib/plugins").mkdir(parents=True)
@@ -1023,7 +2137,8 @@ class EvaluationTests(unittest.TestCase):
             qemu = self._write_executable(
                 emulator_output / "bin/qemu-aarch64",
                 f"#!{sys.executable}\n"
-                "import pathlib, socket, sys, time\n"
+                "import os, pathlib, socket, sys, time\n"
+                f"pathlib.Path({str(root / 'qemu.pid')!r}).write_text(str(os.getpid()))\n"
                 "plugin = sys.argv[sys.argv.index('-plugin') + 1]\n"
                 "socket_value = next(item for item in plugin.split(',') "
                 "if item.startswith('socket='))\n"
@@ -1048,10 +2163,24 @@ class EvaluationTests(unittest.TestCase):
                 "connection.close()\n"
                 "server.close()\n"
                 "sockpath.unlink()\n"
+                "ready_path = pathlib.Path(value('--plugin-terminal-ready'))\n"
+                "evidence_path = pathlib.Path(value('--plugin-terminal-evidence'))\n"
+                "ready = {'schema':'focaccia-plugin-terminal-ready-v1',\n"
+                f" 'nonce':'n','pid':int(pathlib.Path({str(root / 'qemu.pid')!r}).read_text()),\n"
+                f" 'binarySha256':{evaluation._sha256(binary)!r},\n"
+                " 'finalPc':0x40101c,'transformCount':7,'stateCount':8}\n"
+                "ready_path.write_text(json.dumps(ready))\n"
+                "while not evidence_path.exists(): pass\n"
                 "report = {\n"
                 " 'schema':'focaccia-qemu-validation-v1', 'status':'mismatch',\n"
-                " 'trace':{'available':True,'complete':True,'state_count':8,\n"
-                "          'transform_count':7,'terminal_reached':True},\n"
+                " 'trace':{'available':True,'complete':False,'state_count':8,\n"
+                "          'transform_count':7,'terminal_reached':False},\n"
+                " 'completion':{'scope':'whole-program',\n"
+                "  'expected_completion_available':True,\n"
+                "  'observed_completion_available':True,\n"
+                "  'final_live_boundary_bound':True,'execution_complete':True,\n"
+                "  'full_run_timing_eligible':True,\n"
+                "  'terminal_outcome':'mismatch','terminal_action':'mismatch'},\n"
                 " 'validation':{'entries':[{'transition_range':[0x401018,0x40101c],\n"
                 "  'errors':[{'severity':'confirmed','code':'register-content-mismatch',\n"
                 "             'subject':'X0'}]}]}}\n"
@@ -1153,6 +2282,7 @@ class EvaluationTests(unittest.TestCase):
                     }
                 )
             )
+            self._complete_native_fixture_identity(native_directory)
             unused = self._write_executable(root / "unused", "#!/bin/sh\nexit 0\n")
             emulator_output = root / "qemu-plugin-output"
             (emulator_output / "bin").mkdir(parents=True)
@@ -1251,6 +2381,7 @@ class EvaluationTests(unittest.TestCase):
                 )
             )
 
+            self._complete_native_fixture_identity(native_directory)
             emulator_output = root / "qemu-output"
             (emulator_output / "bin").mkdir(parents=True)
             self._write_executable(
@@ -1309,7 +2440,10 @@ class EvaluationTests(unittest.TestCase):
                 'test "$deterministic$manifest$input$skip$quiet" = 11111 || exit 9\n'
                 "printf '%s\\n' "
                 '\'{"schema":"focaccia-qemu-validation-v1",'
-                '"status":"mismatch","validation":{"entries":[{'
+                '"trace":{"available":true,"complete":true,'
+                '"terminal_reached":true,"state_count":2,"transform_count":1},'
+                '"status":"mismatch","validation":{"diagnostics":[],"diagnostic_counts":{},'
+                '"severity_counts":{"confirmed":1},"entries":[{'
                 '"transition_range":[4198400,4202496],"errors":[{'
                 '"severity":"confirmed","code":"register-content-mismatch",'
                 '"subject":"RAX"}]}]},"replay":{"active":true,'
@@ -1487,6 +2621,28 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(rows[0]["status"], "failed")
             self.assertEqual(rows[0]["seconds"], "")
 
+    @staticmethod
+    def _complete_native_fixture_identity(directory: Path) -> None:
+        """Simulate producer metadata for newly created fake artifacts only."""
+        path = directory / "metadata.json"
+        document = json.loads(path.read_text())
+        document.update(
+            role="native",
+            system=directory.name,
+            machine=directory.name.removesuffix("-linux"),
+        )
+        for case in document["cases"].values():
+            kind = case.setdefault("kind", "trigger")
+            for item in case["iterations"]:
+                item["kind"] = kind
+                for field in (
+                    ("binary",) if kind == "trigger" else ("injectedBinary",)
+                ) + ("oracle",):
+                    item.setdefault(
+                        field + "Sha256", evaluation._sha256(directory / item[field])
+                    )
+        path.write_text(json.dumps(document))
+
     @classmethod
     def _write_config(
         cls,
@@ -1505,6 +2661,7 @@ class EvaluationTests(unittest.TestCase):
         replay_preflight: Path | None = None,
         emulators: dict[str, object] | None = None,
         emulator_cases: dict[str, object] | None = None,
+        trigger_trace_mode: str = "legacy-witness",
     ) -> Path:
         config = root / "config.json"
         config.write_text(
@@ -1512,6 +2669,7 @@ class EvaluationTests(unittest.TestCase):
                 {
                     "schema": "focaccia-evaluation-config-v5",
                     "role": role,
+                    "triggerTraceMode": trigger_trace_mode,
                     "system": cls._current_system(),
                     "captureProgram": str(capture),
                     "nmProgram": str(nm),

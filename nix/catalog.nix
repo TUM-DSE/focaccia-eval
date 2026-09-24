@@ -117,9 +117,9 @@ let
       instruction = "BLSI";
       category = "flags";
       source = ../triggers/2175;
-      sources = [ "main.S" ];
+      sources = [ "main.c" "main.S" ];
       cflags = [ "-mbmi" ];
-      freestanding = true;
+      freestanding = false;
       expected = "The low RFLAGS byte after BLSI is 3, not 2.";
       provenance = "https://gitlab.com/qemu-project/qemu/-/issues/2175";
     };
@@ -150,12 +150,13 @@ let
     "1376" = {
       id = "1376";
       guestIsa = "x86_64";
+      expectedNativeStatus = 0;
       instruction = "LSL";
       category = "crash";
       source = ../triggers/1376;
-      sources = [ "main.S" ];
+      sources = [ "main.c" "main.S" ];
       cflags = [ ];
-      freestanding = true;
+      freestanding = false;
       expected = "An inaccessible segment descriptor clears ZF without a SIGSEGV.";
       provenance = "https://gitlab.com/qemu-project/qemu/-/issues/1376";
     };
@@ -177,9 +178,9 @@ let
       instruction = "CMPPD";
       category = "crash";
       source = ../triggers/1832422;
-      sources = [ "main.S" ];
+      sources = [ "main.c" "main.S" ];
       cflags = [ "-msse2" ];
-      freestanding = true;
+      freestanding = false;
       expected = "CMPPD masks unused immediate bits instead of raising SIGILL.";
       provenance = "https://bugs.launchpad.net/qemu/+bug/1832422";
     };
@@ -305,10 +306,19 @@ let
     "qemu-364" = {
       trigger = "364";
       emulator = "qemu-5-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 4;
+      expectedMismatchCode = "memory-content-mismatch";
     };
     "qemu-508" = {
       trigger = "508";
       emulator = "qemu-6-1-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 5;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "RAX";
     };
     "box64-508" = {
       trigger = "508-box64";
@@ -317,39 +327,84 @@ let
     "qemu-1372" = {
       trigger = "1372";
       emulator = "qemu-7-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 30;
+      expectedMismatchLength = 5;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "RAX";
     };
     "qemu-1374" = {
       trigger = "1374";
       emulator = "qemu-7-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 5;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "RAX";
     };
     "qemu-1828867" = {
       trigger = "1828867";
       emulator = "qemu-4-0-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 2;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "RAX";
     };
     "qemu-1370" = {
       trigger = "1370";
       emulator = "qemu-7-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 5;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "CF";
     };
     "qemu-1371" = {
       trigger = "1371";
       emulator = "qemu-7-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 23;
+      expectedMismatchLength = 5;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "CF";
     };
     "qemu-2175" = {
       trigger = "2175";
       emulator = "qemu-8-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 5;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "CF";
     };
     "qemu-1375" = {
       trigger = "1375";
       emulator = "qemu-7-2-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 4;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "XMM1";
     };
     "qemu-2495" = {
       trigger = "2495";
       emulator = "qemu-9-0-0";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 4;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "R8";
     };
     "qemu-1861404" = {
       trigger = "1861404";
       emulator = "qemu-4-2-0";
       validationCutpoint = "stop";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      # The cutpoint composes the YMM load/store witness into one transition.
+      expectedMismatchLength = 8;
+      expectedMismatchCode = "memory-content-mismatch";
     };
     "qemu-1376" = {
       trigger = "1376";
@@ -378,6 +433,12 @@ let
     "qemu-2419" = {
       trigger = "2419";
       emulator = "qemu-8-1-3";
+      expectedMismatchSourceSymbol = "focaccia_trace_start";
+      expectedMismatchSourceOffset = 0;
+      expectedMismatchLength = 4;
+      expectedMismatchCode = "register-content-mismatch";
+      expectedMismatchSubject = "X0";
+      qemuCpuModel = "neoverse-v1";
     };
   };
 

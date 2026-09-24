@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,6 +57,16 @@ class OfflineValidationTests(unittest.TestCase):
                 accepted["guestArchitecture"],
                 {"isa": "x86_64", "endianness": "little"},
             )
+            self.assertEqual(
+                accepted["boundaryPolicy"],
+                {
+                    "kind": "observed-coarse-cutpoints-v1",
+                    "rawStateCount": 2,
+                    "retainedStateCount": 2,
+                    "discardedFusedPushRecords": 0,
+                    "instructionBoundaryComplete": False,
+                },
+            )
 
             log.write_text(
                 "Box64 trace\n"
@@ -75,6 +87,48 @@ class OfflineValidationTests(unittest.TestCase):
                 "box64", msgpack_oracle, log, "msgpack"
             )
             self.assertEqual(accepted_msgpack["status"], "accepted")
+
+            binary = root / "program"
+            binary.write_bytes(b"guest")
+            evidence = root / "execution.json"
+
+            def digest(path: Path) -> str:
+                return hashlib.sha256(path.read_bytes()).hexdigest()
+
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "schema": "focaccia-text-process-evidence-v1",
+                        "runId": "run-1",
+                        "binary": str(binary),
+                        "binarySha256": digest(binary),
+                        "oracleSha256": digest(msgpack_oracle),
+                        "logSha256": digest(log),
+                        "processState": "exited",
+                        "exitStatus": 0,
+                        "expectedExitStatus": 0,
+                    }
+                )
+            )
+            completed = offline_validation.validate(
+                "box64", msgpack_oracle, log, "msgpack", evidence
+            )
+            self.assertTrue(completed["completion"]["executionComplete"])
+            self.assertFalse(completed["completion"]["semanticComplete"])
+            self.assertTrue(completed["completion"]["entryBoundary"]["match"])
+            self.assertTrue(completed["completion"]["finalOrdinaryBoundary"]["match"])
+            self.assertEqual(
+                completed["unsupportedData"],
+                ["memory-state", "system-actions", "unlogged-register-bits"],
+            )
+
+            document = json.loads(evidence.read_text())
+            document["logSha256"] = "0" * 64
+            evidence.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ValueError, "logSha256"):
+                offline_validation.validate(
+                    "box64", msgpack_oracle, log, "msgpack", evidence
+                )
 
 
 if __name__ == "__main__":

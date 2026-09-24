@@ -20,6 +20,11 @@
       "emulator": "qemu-9-0-0",
       "status": "passed",
       "iterations": [{
+        "report": "profiles/lua-validation.json",
+        "reportSha256": "1a040fa5c4a217311dbd5324e41ce842f1abcc00d888487f7dd9ef8689898526",
+        "expectedValidation": "mismatch",
+        "expectedMismatchRange": [4096, 4100],
+        "expectedMismatchSubject": "R8",
         "profile": "profiles/lua.json",
         "profileSha256": "c96834efc5bf0a81155c88ea0e21664ae42d679d845ef23967f2cdc91df47d5d"
       }]

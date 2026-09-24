@@ -1,0 +1,1906 @@
+{
+  "schema": "focaccia-qemu-validation-v1",
+  "status": "mismatch",
+  "trace": {
+    "available": true,
+    "complete": true,
+    "expected_terminal_pc": 4286790,
+    "state_count": 96070,
+    "terminal_pc": 4286790,
+    "terminal_reached": true,
+    "transform_count": 96069
+  },
+  "replay": {
+    "active": true,
+    "by_outcome": {
+      "handled": 29
+    },
+    "by_strategy": {
+      "execute-and-reconcile": 9,
+      "recorded-replay": 20
+    },
+    "record_count": 29
+  },
+  "validation": {
+    "diagnostic_counts": {},
+    "diagnostics": [],
+    "entries": [
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x44cbb00000000000474d20, actual 0x474d20000000000044cbb0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4877620,
+        "transition_range": [
+          4877620,
+          4877624
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609a20 is false. Expected b0cb440000000000204d470000000000, actual 204d470000000000b0cb440000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609a20"
+          }
+        ],
+        "pc": 4877624,
+        "transition_range": [
+          4877624,
+          4877631
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x4410f00000000000474cc0, actual 0x474cc000000000004410f0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4877631,
+        "transition_range": [
+          4877631,
+          4877636
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609a30 is false. Expected f010440000000000c04c470000000000, actual c04c470000000000f010440000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609a30"
+          }
+        ],
+        "pc": 4877636,
+        "transition_range": [
+          4877636,
+          4877643
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x4411100000000000441100, actual 0x4411000000000000441110.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4877643,
+        "transition_range": [
+          4877643,
+          4877648
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609a40 is false. Expected 10114400000000000011440000000000, actual 00114400000000001011440000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609a40"
+          }
+        ],
+        "pc": 4877648,
+        "transition_range": [
+          4877648,
+          4877655
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x453660, actual 0x4536600000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4877655,
+        "transition_range": [
+          4877655,
+          4877660
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609a50 is false. Expected 00000000000000006036450000000000, actual 60364500000000000000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609a50"
+          }
+        ],
+        "pc": 4877660,
+        "transition_range": [
+          4877660,
+          4877667
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6018, actual 0x2dae60180000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6018000000002dae6018.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6040, actual 0x2dae60400000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6040000000002dae6040.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6068, actual 0x2dae60680000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6068000000002dae6068.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6090, actual 0x2dae60900000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6090000000002dae6090.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x1, actual 0x10000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4878060,
+        "transition_range": [
+          4878060,
+          4878064
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609aa8 is false. Expected 00000000000000000100000000000000, actual 01000000000000000000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609aa8"
+          }
+        ],
+        "pc": 4878064,
+        "transition_range": [
+          4878064,
+          4878071
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x44a020000000000044a040, actual 0x44a040000000000044a020.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4878071,
+        "transition_range": [
+          4878071,
+          4878076
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609ab8 is false. Expected 20a044000000000040a0440000000000, actual 40a044000000000020a0440000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609ab8"
+          }
+        ],
+        "pc": 4878076,
+        "transition_range": [
+          4878076,
+          4878083
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x4561100000000000461010, actual 0x4610100000000000456110.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4878083,
+        "transition_range": [
+          4878083,
+          4878088
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609ac8 is false. Expected 10614500000000001010460000000000, actual 10104600000000001061450000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609ac8"
+          }
+        ],
+        "pc": 4878088,
+        "transition_range": [
+          4878088,
+          4878095
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x4615800000000000442480, actual 0x4424800000000000461580.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4878095,
+        "transition_range": [
+          4878095,
+          4878100
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609ad8 is false. Expected 80154600000000008024440000000000, actual 80244400000000008015460000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609ad8"
+          }
+        ],
+        "pc": 4878100,
+        "transition_range": [
+          4878100,
+          4878107
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x4424900000000000457ac0, actual 0x457ac00000000000442490.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4878107,
+        "transition_range": [
+          4878107,
+          4878112
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609ae8 is false. Expected 9024440000000000c07a450000000000, actual c07a4500000000009024440000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609ae8"
+          }
+        ],
+        "pc": 4878112,
+        "transition_range": [
+          4878112,
+          4878119
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x45617000000000004543c0, actual 0x4543c00000000000456170.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4878119,
+        "transition_range": [
+          4878119,
+          4878124
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x609af8 is false. Expected 7061450000000000c043450000000000, actual c0434500000000007061450000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x609af8"
+          }
+        ],
+        "pc": 4878124,
+        "transition_range": [
+          4878124,
+          4878131
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae60b8, actual 0x2dae60b80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae60b8000000002dae60b8.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae60b8, actual 0x2dae60b80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae60b8000000002dae60b8.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6040, actual 0x2dae60400000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6040000000002dae6040.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6018, actual 0x2dae60180000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6018000000002dae6018.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6040, actual 0x2dae60400000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6040000000002dae6040.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6068, actual 0x2dae60680000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6068000000002dae6068.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6090, actual 0x2dae60900000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6090000000002dae6090.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x3, actual 0x30000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4366875,
+        "transition_range": [
+          4366875,
+          4366879
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x90, actual 0x900000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 4366898,
+        "transition_range": [
+          4366898,
+          4366902
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x90000000030000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 4366902,
+        "transition_range": [
+          4366902,
+          4366906
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x6094a0 is false. Expected 0000000000000000, actual 0300000090000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x6094a0"
+          }
+        ],
+        "pc": 4366906,
+        "transition_range": [
+          4366906,
+          4366914
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae60b8, actual 0x2dae60b80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae60b8000000002dae60b8.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6090, actual 0x2dae60900000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6090000000002dae6090.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6068, actual 0x2dae60680000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6068000000002dae6068.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6040, actual 0x2dae60400000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6040000000002dae6040.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6018, actual 0x2dae60180000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6018000000002dae6018.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6018, actual 0x2dae60180000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6018000000002dae6018.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6090, actual 0x2dae60900000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6090000000002dae6090.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6018, actual 0x2dae60180000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6018000000002dae6018.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x59e4bf, actual 0x59e4bf0000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5890417,
+        "transition_range": [
+          5890417,
+          5890425
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x59e5c0, actual 0x59e5c00000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5890425,
+        "transition_range": [
+          5890425,
+          5890430
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x59e4bf000000000059e5c0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5890441,
+        "transition_range": [
+          5890441,
+          5890445
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x7ef76f847080 is false. Expected c0e5590000000000bfe4590000000000, actual bfe4590000000000c0e5590000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x7ef76f847080"
+          }
+        ],
+        "pc": 5890456,
+        "transition_range": [
+          5890456,
+          5890460
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892033,
+        "transition_range": [
+          5892033,
+          5892038
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84753000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892041,
+        "transition_range": [
+          5892041,
+          5892045
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847130, actual 0x7ef76f8471300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891392,
+        "transition_range": [
+          5891392,
+          5891397
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5891402,
+        "transition_range": [
+          5891402,
+          5891407
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84713000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891407,
+        "transition_range": [
+          5891407,
+          5891411
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x7ef76f847048 is false. Expected 3075846ff77e00003071846ff77e0000, actual 3071846ff77e00003075846ff77e0000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x7ef76f847048"
+          }
+        ],
+        "pc": 5891411,
+        "transition_range": [
+          5891411,
+          5891415
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae60e0, actual 0x2dae60e00000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae60e0000000002dae60e0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae60b8, actual 0x2dae60b80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae60b8000000002dae60b8.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6108, actual 0x2dae61080000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6108000000002dae6108.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae6130, actual 0x2dae61300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae6130000000002dae6130.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae60e0, actual 0x2dae60e00000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae60e0000000002dae60e0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6090, actual 0x2dae60900000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6090000000002dae6090.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892033,
+        "transition_range": [
+          5892033,
+          5892038
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84753000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892041,
+        "transition_range": [
+          5892041,
+          5892045
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847130, actual 0x7ef76f8471300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891392,
+        "transition_range": [
+          5891392,
+          5891397
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5891402,
+        "transition_range": [
+          5891402,
+          5891407
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84713000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891407,
+        "transition_range": [
+          5891407,
+          5891411
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x7ef76f847048 is false. Expected 3075846ff77e00003071846ff77e0000, actual 3071846ff77e00003075846ff77e0000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x7ef76f847048"
+          }
+        ],
+        "pc": 5891411,
+        "transition_range": [
+          5891411,
+          5891415
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892033,
+        "transition_range": [
+          5892033,
+          5892038
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84753000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892041,
+        "transition_range": [
+          5892041,
+          5892045
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847130, actual 0x7ef76f8471300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891392,
+        "transition_range": [
+          5891392,
+          5891397
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5891402,
+        "transition_range": [
+          5891402,
+          5891407
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84713000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891407,
+        "transition_range": [
+          5891407,
+          5891411
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x7ef76f847048 is false. Expected 3075846ff77e00003071846ff77e0000, actual 3071846ff77e00003075846ff77e0000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x7ef76f847048"
+          }
+        ],
+        "pc": 5891411,
+        "transition_range": [
+          5891411,
+          5891415
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892033,
+        "transition_range": [
+          5892033,
+          5892038
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84753000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892041,
+        "transition_range": [
+          5892041,
+          5892045
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x7ef76f847130, actual 0x7ef76f8471300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891392,
+        "transition_range": [
+          5891392,
+          5891397
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x7ef76f847530, actual 0x7ef76f8475300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5891402,
+        "transition_range": [
+          5891402,
+          5891407
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x7ef76f84713000007ef76f847530.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891407,
+        "transition_range": [
+          5891407,
+          5891411
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x7ef76f847048 is false. Expected 3075846ff77e00003071846ff77e0000, actual 3071846ff77e00003075846ff77e0000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x7ef76f847048"
+          }
+        ],
+        "pc": 5891411,
+        "transition_range": [
+          5891411,
+          5891415
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6018, actual 0x2dae60180000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6018000000002dae6018.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x2dae60e0, actual 0x2dae60e00000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827318,
+        "transition_range": [
+          5827318,
+          5827323
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x0, actual 0x2dae60e0000000002dae60e0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5827330,
+        "transition_range": [
+          5827330,
+          5827334
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae60e0, actual 0x2dae60e00000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae60e0000000002dae60e0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x2dae6130, actual 0x2dae61300000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822758,
+        "transition_range": [
+          5822758,
+          5822763
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x2dae6130000000002dae6130.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5822768,
+        "transition_range": [
+          5822768,
+          5822772
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x60f2e8, actual 0x60f2e80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892033,
+        "transition_range": [
+          5892033,
+          5892038
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x60f2e8000000000060f2e8.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5892041,
+        "transition_range": [
+          5892041,
+          5892045
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x60eee8, actual 0x60eee80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891392,
+        "transition_range": [
+          5891392,
+          5891397
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM1 is false. Expected 0x60f2e8, actual 0x60f2e80000000000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM1"
+          }
+        ],
+        "pc": 5891402,
+        "transition_range": [
+          5891402,
+          5891407
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register XMM0 is false. Expected 0x0, actual 0x60eee8000000000060f2e8.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "XMM0"
+          }
+        ],
+        "pc": 5891407,
+        "transition_range": [
+          5891407,
+          5891411
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "memory-content-mismatch",
+            "message": "Content of memory at 0x60dac8 is false. Expected e8f2600000000000e8ee600000000000, actual e8ee600000000000e8f2600000000000.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "0x60dac8"
+          }
+        ],
+        "pc": 5891411,
+        "transition_range": [
+          5891411,
+          5891415
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register RAX is false. Expected 0x7461657243202d2d, actual 0x43202d2d.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "RAX"
+          }
+        ],
+        "pc": 4286785,
+        "transition_range": [
+          4286785,
+          4286790
+        ]
+      }
+    ],
+    "entry_count": 96069,
+    "severity_counts": {
+      "confirmed": 117
+    }
+  }
+}

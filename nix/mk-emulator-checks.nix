@@ -4,6 +4,9 @@
   system,
   focaccia,
   qemuCaseEvaluationData,
+  qemuEvaluationData,
+  box64EvaluationData,
+  nativeTriggerDefinitions,
   triggerPackages,
   box64Package,
   box64EvaluationConfig,
@@ -14,6 +17,63 @@
 }:
 
 let
+  # Configuration-only coverage: no emulator execution, debugger, RR, or oracle
+  # generation. Discard store contexts so this check cannot realize those tools.
+  paperEmulatorMatrixShape = builtins.unsafeDiscardStringContext (
+    builtins.toJSON {
+      inherit system;
+      nativeGuests = lib.mapAttrs (_: trigger: trigger.guestIsa) nativeTriggerDefinitions;
+      qemu = {
+        inherit (qemuEvaluationData) role triggers applications emulatorCases;
+        backends = lib.mapAttrs (_: emulator: emulator.backend) qemuEvaluationData.emulators;
+      };
+      box64 = {
+        inherit (box64EvaluationData) role triggers applications emulatorCases;
+        backends = lib.mapAttrs (_: emulator: emulator.backend) box64EvaluationData.emulators;
+      };
+      singleCases = lib.mapAttrs (_: data: data.emulatorCases) qemuCaseEvaluationData;
+    }
+  );
+  paperEmulatorMatrixCheck =
+    pkgs.runCommand "paper-emulator-guest-host-matrix" { nativeBuildInputs = [ pkgs.jq ]; }
+      ''
+        printf '%s\n' ${lib.escapeShellArg paperEmulatorMatrixShape} > matrix.json
+        jq -e '
+          . as $matrix |
+          ["364", "2248", "2419"] as $arm |
+          ["508", "1370", "1371", "1372", "1374", "1375", "1376", "1377",
+           "1828867", "1832422", "1861404", "2175", "2495"] as $x86 |
+          ([$matrix.qemu.emulatorCases | to_entries[] |
+            select(.value.kind == "trigger") | .key] | sort) ==
+            ([$arm[], $x86[] | "qemu-" + .] | sort) and
+          all($matrix.qemu.emulatorCases | to_entries[];
+            .key as $name | .value as $case |
+            $case.guestSystem ==
+              (if ($arm | index($case.trigger)) != null
+               then "aarch64-linux" else "x86_64-linux" end) and
+            $case.program == ("bin/qemu-" + ($case.guestSystem | sub("-linux$"; ""))) and
+            $matrix.qemu.backends[$case.emulator] ==
+              (if $case.trigger == "2248" then "qemu-plugin" else "qemu-gdb" end) and
+            $matrix.singleCases[$name] == {($name): $case}) and
+          ($matrix.singleCases | keys) == ($matrix.qemu.emulatorCases | keys) and
+          $matrix.qemu.role == "qemu" and $matrix.box64.role == "box64" and
+          all($matrix.qemu, $matrix.box64; .triggers == {} and .applications == {}) and
+          ($matrix.nativeGuests | length) ==
+            (if $matrix.system == "x86_64-linux" then 14 else 3 end) and
+          all($matrix.nativeGuests[]; . + "-linux" == $matrix.system) and
+          (if $matrix.system == "aarch64-linux" then
+            ($matrix.box64.emulatorCases | keys) == ["box64-508"] and
+            $matrix.box64.emulatorCases["box64-508"].guestSystem == "x86_64-linux" and
+            $matrix.box64.emulatorCases["box64-508"].program == "bin/box64" and
+            $matrix.box64.backends == {"box64-0-3-8": "box64-log"}
+           else
+            $matrix.system == "x86_64-linux" and
+            $matrix.box64.emulatorCases == {} and $matrix.box64.backends == {}
+           end)
+        ' matrix.json > /dev/null
+        mkdir -p "$out"
+        cp matrix.json "$out/configuration.json"
+      '';
   qemuCaseEvaluationShape = builtins.unsafeDiscardStringContext (
     builtins.toJSON (
       lib.mapAttrs (_: data: {
@@ -227,10 +287,14 @@ let
         ' "$out/injected.json" > /dev/null
         jq -e '
           .schema == "focaccia-offline-validation-v1" and
-          .status == "accepted" and
+          .status == "incomplete" and
           .partialState == true and
-          .validation.severity_counts == {} and
-          all(.validation.entries[]; (.errors | length) == 0)
+          (.validation.severity_counts.confirmed // 0) == 0 and
+          (.validation.severity_counts.possible // 0) == 0 and
+          .validation.severity_counts.incomplete > 0 and
+          ([.validation.entries[].errors[] |
+            select(.severity == "confirmed" or .severity == "possible" or
+              (.message | contains("register RAX")))] | length) == 0
         ' "$out/reference.json" > /dev/null
         cp "$metadata" "$out/oracle-metadata.json"
         cp "$oracle" "$out/oracle.msgpack"
@@ -315,6 +379,7 @@ let
 in
 {
   inherit
+    paperEmulatorMatrixCheck
     qemuCaseEvaluationCheck
     box64RegisterTraceCheck
     box64ReferenceValidationConfigCheck

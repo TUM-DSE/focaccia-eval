@@ -138,7 +138,10 @@ let
       trigger = triggers.${case.trigger};
       variant = emulatorVariants.${case.emulator} or { emulator = "qemu"; };
     in
-    trigger.guestIsa != nativeGuestIsa && (variant.emulator == "qemu" || system == "aarch64-linux")
+    # Table 1 includes both same-ISA and cross-ISA QEMU consumers. Oracle
+    # selection remains guest-native, independent of this emulator host.
+    (variant.emulator == "qemu" && builtins.elem trigger.guestIsa [ "x86_64" "aarch64" ])
+    || (variant.emulator == "box64" && trigger.guestIsa == "x86_64" && system == "aarch64-linux")
   ) paperTriggers;
   emulatorTriggerCasesFor =
     family:
@@ -216,10 +219,25 @@ let
         expectedWitnessSha256 = triggerWitnessHashes.${case.trigger};
       }
       // lib.optionalAttrs (case ? expectedMismatchSourceSymbol) {
-        inherit (case) expectedMismatchSourceSymbol expectedMismatchSubject;
+        inherit (case) expectedMismatchSourceSymbol;
+      }
+      // lib.optionalAttrs (case ? expectedMismatchSubject) {
+        inherit (case) expectedMismatchSubject;
+      }
+      // lib.optionalAttrs (case ? expectedMismatchCode) {
+        inherit (case) expectedMismatchCode expectedMismatchLength;
+      }
+      // lib.optionalAttrs (case ? expectedMismatchSourceOffset) {
+        inherit (case) expectedMismatchSourceOffset;
+      }
+      // lib.optionalAttrs (case ? expectedMismatchSourceAddress) {
+        inherit (case) expectedMismatchSourceAddress;
       }
       // lib.optionalAttrs (case ? validationCutpoint) {
         inherit (case) validationCutpoint;
+      }
+      // lib.optionalAttrs (case ? qemuCpuModel) {
+        inherit (case) qemuCpuModel;
       }
       // lib.optionalAttrs (case ? expectedTerminalSignal) {
         inherit (case) expectedTerminalSignal expectedFaultSymbol;
@@ -254,6 +272,7 @@ let
   '';
   mkEvaluationConfigData = role: family: cases: {
     schema = "focaccia-evaluation-config-v5";
+    triggerTraceMode = "whole-program";
     inherit role system;
     captureProgram = focaccia.apps.${system}.capture-transforms.program;
     nmProgram = "${pkgs.binutils}/bin/nm";
@@ -287,7 +306,8 @@ let
     }
   );
   qemuCases = emulatorCasesFor "qemu";
-  qemuEvaluationConfig = mkEvaluationConfig "qemu" (mkEvaluationConfigData "qemu" "qemu" qemuCases);
+  qemuEvaluationData = mkEvaluationConfigData "qemu" "qemu" qemuCases;
+  qemuEvaluationConfig = mkEvaluationConfig "qemu" qemuEvaluationData;
   qemuFullCurlEvaluationConfig = mkEvaluationConfig "qemu-curl-full" (
     mkEvaluationConfigData "qemu" "qemu" qemuFullCurlCases
   );
@@ -297,14 +317,27 @@ let
   qemuCaseEvaluationConfigs = lib.mapAttrs (
     name: data: mkEvaluationConfig name data
   ) qemuCaseEvaluationData;
-  box64EvaluationConfig = mkEvaluationConfig "box64" (
-    mkEvaluationConfigData "box64" "box64" (emulatorCasesFor "box64")
-  );
+  box64EvaluationData = mkEvaluationConfigData "box64" "box64" (emulatorCasesFor "box64");
+  box64EvaluationConfig = mkEvaluationConfig "box64" box64EvaluationData;
   x86ReproducerCompiler = pkgs.pkgsCross.gnu64.stdenv.cc;
   x86ReproducerCompilerProgram = "${x86ReproducerCompiler}/bin/${x86ReproducerCompiler.targetPrefix}cc";
   qemuReproducerReference = focaccia.packages.${system}.qemu-plugin;
   qemuReproducerReferenceVersion = qemuReproducerReference.version;
   reproducerEvaluationCases = {
+    "508" = {
+      sourceCase = "qemu-508";
+      buggyEmulator = "qemu-6-1-0";
+      buggyVersion = emulatorVariants.qemu-6-1-0.version;
+      buggyProgram = "${qemuPackages.qemu-6-1-0-user}/bin/qemu-x86_64";
+      referenceEmulator = "qemu-9-0-0";
+      referenceVersion = emulatorVariants.qemu-9-0-0.version;
+      referenceProgram = "${qemuPackages.qemu-9-0-0-user}/bin/qemu-x86_64";
+      primaryError = {
+        code = "register-content-mismatch";
+        subject = "RAX";
+      };
+      sourceSymbol = "focaccia_trace_start";
+    };
     "1370" = {
       sourceCase = "qemu-1370";
       buggyEmulator = "qemu-7-2-0";
@@ -373,7 +406,7 @@ let
         subject = "SIGSEGV";
       };
       sourceSymbol = "focaccia_trace_start";
-      entryPrefixSymbol = "_start";
+      requiredRegisters = [ "RAX" "RBX" ];
     };
     "1377" = {
       sourceCase = "qemu-1377";
@@ -386,6 +419,34 @@ let
       primaryError = {
         code = "unexpected-guest-signal";
         subject = "SIGSEGV";
+      };
+      sourceSymbol = "focaccia_trace_start";
+    };
+    "1375" = {
+      sourceCase = "qemu-1375";
+      buggyEmulator = "qemu-7-2-0";
+      buggyVersion = emulatorVariants.qemu-7-2-0.version;
+      buggyProgram = "${qemuPackages.qemu-7-2-0-user}/bin/qemu-x86_64";
+      referenceEmulator = "qemu-current-reference";
+      referenceVersion = qemuReproducerReferenceVersion;
+      referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      primaryError = {
+        code = "register-content-mismatch";
+        subject = "XMM1";
+      };
+      sourceSymbol = "focaccia_trace_start";
+    };
+    "1828867" = {
+      sourceCase = "qemu-1828867";
+      buggyEmulator = "qemu-4-0-0";
+      buggyVersion = emulatorVariants.qemu-4-0-0.version;
+      buggyProgram = "${qemuPackages.qemu-4-0-0-user}/bin/qemu-x86_64";
+      referenceEmulator = "qemu-current-reference";
+      referenceVersion = qemuReproducerReferenceVersion;
+      referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      primaryError = {
+        code = "register-content-mismatch";
+        subject = "RAX";
       };
       sourceSymbol = "focaccia_trace_start";
     };
@@ -402,7 +463,49 @@ let
         subject = "CF";
       };
       sourceSymbol = "focaccia_trace_start";
-      entryPrefixSymbol = "_start";
+      requiredRegisters = [ "CF" ];
+    };
+    "2495" = {
+      sourceCase = "qemu-2495";
+      buggyEmulator = "qemu-9-0-0";
+      buggyVersion = emulatorVariants.qemu-9-0-0.version;
+      buggyProgram = "${qemuPackages.qemu-9-0-0-user}/bin/qemu-x86_64";
+      referenceEmulator = "qemu-current-reference";
+      referenceVersion = qemuReproducerReferenceVersion;
+      referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      primaryError = {
+        code = "register-content-mismatch";
+        subject = "R8";
+      };
+      sourceSymbol = "focaccia_trace_start";
+    };
+    "1861404" = {
+      sourceCase = "qemu-1861404";
+      buggyEmulator = "qemu-4-2-0";
+      buggyVersion = emulatorVariants.qemu-4-2-0.version;
+      buggyProgram = "${qemuPackages.qemu-4-2-0-user}/bin/qemu-x86_64";
+      referenceEmulator = "qemu-current-reference";
+      referenceVersion = qemuReproducerReferenceVersion;
+      referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      primaryError = {
+        code = "memory-content-mismatch";
+        subject = "0x40007fcc20";
+      };
+      sourceSymbol = "focaccia_trace_start";
+    };
+    "1832422" = {
+      sourceCase = "qemu-1832422";
+      buggyEmulator = "qemu-4-0-0";
+      buggyVersion = emulatorVariants.qemu-4-0-0.version;
+      buggyProgram = "${qemuPackages.qemu-4-0-0-user}/bin/qemu-x86_64";
+      referenceEmulator = "qemu-current-reference";
+      referenceVersion = qemuReproducerReferenceVersion;
+      referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      primaryError = {
+        code = "unexpected-guest-signal";
+        subject = "SIGILL";
+      };
+      sourceSymbol = "focaccia_trace_start";
     };
     sqlite = {
       sourceCase = "qemu-app-sqlite";
@@ -421,10 +524,13 @@ let
   };
   reproducerEvaluationConfig = pkgs.writeText "focaccia-reproducer-evaluation-config.json" (
     builtins.toJSON {
-      schema = "focaccia-reproducer-evaluation-config-v1";
+      schema = "focaccia-reproducer-evaluation-config-v2";
       inherit system;
-      focacciaRevision =
-        focaccia.rev or (throw "The reproducer evaluator requires a revision-pinned Focaccia input");
+      focacciaSourceIdentity =
+        if focaccia ? rev then
+          { kind = "git-revision"; value = focaccia.rev; }
+        else
+          { kind = "nix-store-path"; value = toString focaccia.outPath; };
       compilerProgram = x86ReproducerCompilerProgram;
       nmProgram = "${pkgs.binutils}/bin/nm";
       validateQemuProgram = focaccia.apps.${system}.validate-qemu.program;
@@ -440,6 +546,17 @@ let
         --config ${config} \
         "$@"
     '';
+  legacyWitnessEvaluationRunners = lib.mapAttrs' (
+    role: data:
+    let name = "evaluate-${role}-legacy-witness";
+    in lib.nameValuePair name (mkEvaluationRunner name (mkEvaluationConfig name (
+      data // { triggerTraceMode = "legacy-witness"; }
+    )))
+  ) {
+    native = mkEvaluationConfigData "native" null { };
+    qemu = qemuEvaluationData;
+    box64 = box64EvaluationData;
+  };
   nativeEvaluationRunner = mkEvaluationRunner "evaluate-native" nativeEvaluationConfig;
   nativeFullCurlEvaluationRunner = mkEvaluationRunner "evaluate-native-curl-full" nativeFullCurlEvaluationConfig;
   qemuEvaluationRunner = mkEvaluationRunner "evaluate-qemu" qemuEvaluationConfig;
@@ -521,6 +638,19 @@ let
       focaccia
       system
       ;
+    nix2container = inputs.nix2container.packages.${system}.nix2container;
+    dependencyPackages = [
+      plotPython
+      focaccia.packages.${system}.focaccia
+      focaccia.packages.${system}.rr
+    ]
+    ++ map (emulator: emulator.output) (
+      builtins.attrValues (evaluationEmulatorsForCases "qemu" qemuCases)
+    )
+    ++ lib.optionals (system == "aarch64-linux") [
+      box64Package.box64-0-3-8
+      x86ReproducerCompiler
+    ];
     fontsConf = plotFontsConf;
     commandPackages = artifactCommandPackages;
     commandNames = artifactCommandNames;
@@ -540,16 +670,24 @@ let
       nativeFullCurlEvaluationConfig
       qemuFullCurlEvaluationConfig
       qemuCaseEvaluationData
-      qemuEvaluationConfig
+      triggerPackages
+      qemuEvaluationData
       applicationOutputs
       mkEmulatorEvaluationRunner
       ;
   };
   inherit (evaluationChecks)
     codeNamingPolicyCheck
+    nativeOracleIdentityCheck
+    applicationOracleProducerHashCheck
+    pluginReferenceAcceptanceCheck
     evaluationNativeCheck
     incrementalEvaluationCompositionCheck
     evaluationFullCurlModesCheck
+    fullApplicationCompletionCheck
+    wholeProgramAcceptanceCheck
+    markerFreeTriggerWholeProgramCheck
+    unannotatedTriggerFixture
     emulatorEvaluationDispatchCheck
     reproducerEffectivenessEvaluationCheck
     evaluationCaptureTimeoutCheck
@@ -565,12 +703,16 @@ let
     terminalValidationCutpointCheck
     unmatchedTransformSkippingCheck
     exactApplicationMismatchLocalizationCheck
+    exactTriggerMismatchLocalizationCheck
+    triggerMismatchWitnessBoundariesCheck
     referenceTerminalAcceptanceCheck
     qemuApplicationReplayCheck
+    qemuCheckConfigurationIsolationCheck
     luaSignalReadinessCheck
     evaluationQemuPluginDriverCheck
     nativeWitnessIdentityCheck
     evaluationBox64DriverCheck
+    box64WholeProgramCompletionCheck
     ;
   namedTriggerPackages = lib.mapAttrs' (
     id: package: lib.nameValuePair "trigger-${id}" package
@@ -607,7 +749,54 @@ let
         nativeBuildInputs = [ pkgs.jq ];
       }
       ''
-        jq -e '
+        cat >paper-case.jq <<'JQ'
+        def nonempty_string: type == "string" and length > 0;
+        def paper_case:
+          if type != "object" then false else
+            (.emulator | nonempty_string) and
+            (.trigger | nonempty_string) and
+            ((keys - [
+              "emulator", "trigger", "validationCutpoint", "qemuCpuModel",
+              "expectedTerminalSignal", "expectedFaultSymbol",
+              "expectedMismatchSourceSymbol", "expectedMismatchSubject",
+              "expectedMismatchSourceOffset", "expectedMismatchLength", "expectedMismatchCode"
+            ]) | length == 0) and
+            (if has("validationCutpoint") then
+              .validationCutpoint == "stop"
+            else true end) and
+            (if has("qemuCpuModel") then
+              (.qemuCpuModel | nonempty_string)
+            else true end) and
+            (if has("expectedTerminalSignal") then
+              (.expectedTerminalSignal | nonempty_string)
+            else true end) and
+            (if has("expectedFaultSymbol") then
+              (.expectedFaultSymbol | nonempty_string)
+            else true end) and
+            (if has("expectedMismatchSourceSymbol") then
+              (.expectedMismatchSourceSymbol | nonempty_string)
+            else true end) and
+            (if has("expectedMismatchSubject") then
+              (.expectedMismatchSubject | nonempty_string)
+            else true end) and
+            (if has("expectedMismatchSourceOffset") then
+              (.expectedMismatchSourceOffset | type == "number" and . == floor and . >= 0)
+            else true end) and
+            (if has("expectedMismatchLength") then
+              (.expectedMismatchLength | type == "number" and . == floor and . > 0)
+            else true end) and
+            (if has("expectedMismatchCode") then
+              (.expectedMismatchCode == "register-content-mismatch" or
+               .expectedMismatchCode == "memory-content-mismatch") and
+              has("expectedMismatchSourceSymbol") and has("expectedMismatchSourceOffset") and
+              has("expectedMismatchLength") and
+              (if .expectedMismatchCode == "register-content-mismatch" then
+                has("expectedMismatchSubject") else true end)
+            else true end)
+          end;
+        JQ
+        jq -e -L . '
+          include "paper-case";
           .schema == "focaccia-trigger-catalog-v1" and
           (.triggers | length == 17) and
           (.paperTriggers | length == 17) and
@@ -615,8 +804,50 @@ let
             "authority", "emulators", "focaccia", "paperTriggers",
             "schema", "supportStatus", "triggers"
           ]) and
-          ([.paperTriggers[] | (keys | sort == ["emulator", "trigger"])] | all)
+          ([.paperTriggers[] | paper_case] | all)
         ' ${catalogPackage}/share/focaccia-reproducers/catalog.json >/dev/null
+        jq -ne -L . '
+          include "paper-case";
+          {emulator: "qemu-test", trigger: "test"} as $base |
+          ["expectedTerminalSignal", "expectedFaultSymbol",
+           "expectedMismatchSourceSymbol", "expectedMismatchSubject"] as $strings |
+          ([
+            $base,
+            ($base + {validationCutpoint: "stop"}),
+            ($base + {qemuCpuModel: "neoverse-v1"}),
+            ($strings[] as $key | $base + {($key): "nonempty"})
+          ] | all(paper_case)) and
+          ([
+            null, [], "case", 1,
+            ($base | del(.emulator)), ($base | del(.trigger)),
+            ($base + {unexpected: "value"}),
+            ($base + {validationCutpoint: "start"}),
+            ((["emulator", "trigger", "validationCutpoint", "qemuCpuModel"] + $strings)[] as $key |
+              [null, false, 1, [], {}, ""][] as $value |
+              $base + {($key): $value})
+          ] | all(paper_case | not))
+        ' >/dev/null
+        jq -ne -L . '
+          include "paper-case";
+          {emulator: "qemu-test", trigger: "test",
+           expectedMismatchSourceSymbol: "focaccia_trace_start",
+           expectedMismatchSourceOffset: 0, expectedMismatchLength: 4,
+           expectedMismatchCode: "memory-content-mismatch"} as $memory |
+          ($memory + {expectedMismatchCode: "register-content-mismatch",
+                      expectedMismatchSubject: "RAX"}) as $register |
+          ([$memory, $register] | all(paper_case)) and
+          ([
+            ($register | del(.expectedMismatchSubject)),
+            ($memory | del(.expectedMismatchSourceOffset)),
+            ($memory | del(.expectedMismatchLength)),
+            ($memory + {expectedMismatchCode: "unknown"}),
+            ($memory + {expectedMismatchSourceOffset: -1}),
+            ($memory + {expectedMismatchLength: 0}),
+            (["expectedMismatchSourceOffset", "expectedMismatchLength"][] as $key |
+              [null, false, "4", [], {}, 0.5][] as $value |
+              $memory + {($key): $value})
+          ] | all(paper_case | not))
+        ' >/dev/null
         touch "$out"
       '';
   corpusPackage = pkgs.linkFarm "focaccia-reproducer-corpus" (
@@ -637,6 +868,9 @@ let
       system
       focaccia
       qemuCaseEvaluationData
+      qemuEvaluationData
+      box64EvaluationData
+      nativeTriggerDefinitions
       triggerPackages
       box64Package
       box64EvaluationConfig
@@ -647,6 +881,7 @@ let
       ;
   };
   inherit (emulatorChecks)
+    paperEmulatorMatrixCheck
     qemuCaseEvaluationCheck
     box64RegisterTraceCheck
     box64ReferenceValidationConfigCheck
@@ -665,15 +900,18 @@ in
     // qemuPackages
     // box64Package
     // qemuCaseEvaluationRunners
+    // legacyWitnessEvaluationRunners
     // applicationOutputs.packages
     // {
       default = corpusPackage;
       corpus = corpusPackage;
       trigger-catalog = catalogPackage;
+      unannotated-trigger-fixture = unannotatedTriggerFixture;
       evaluate-native = nativeEvaluationRunner;
       evaluate-qemu = qemuEvaluationRunner;
       evaluate-emulator = emulatorEvaluationRunner;
       evaluation-plots = evaluationPlots;
+      evaluation-python = plotOutputs.python;
       docker-artifact = dockerArtifactImage;
       focaccia = focaccia.packages.${system}.focaccia;
       focaccia-qemu = focaccia.packages.${system}.qemu-plugin;
@@ -696,18 +934,75 @@ in
     // {
       corpus-all = corpusPackage;
       trigger-catalog = catalogPackage;
+      paper-trigger-libc-entry-context = import ./mk-libc-trigger-check.nix {
+        inherit pkgs triggerPackages triggers paperTriggers;
+      };
       trigger-naming = triggerNamingCheck;
       historical-emulator-nixpkgs-pins = emulatorPinsCheck;
       qemu-bmi-witness-fidelity = qemuBmiWitnessFidelityCheck;
       code-naming-policy = codeNamingPolicyCheck;
+      native-oracle-identity = nativeOracleIdentityCheck;
+      application-oracle-producer-hash = applicationOracleProducerHashCheck;
+      plugin-reference-acceptance = pluginReferenceAcceptanceCheck;
       evaluate-native-interface = evaluationNativeCheck;
       evaluation-selective-applications = evaluationNativeCheck;
       full-curl-measurement-modes = evaluationFullCurlModesCheck;
+      full-application-completion = fullApplicationCompletionCheck;
+      whole-program-without-witness-stop-pc = wholeProgramAcceptanceCheck;
+      marker-free-trigger-whole-program = markerFreeTriggerWholeProgramCheck;
       emulator-evaluation-dispatch = emulatorEvaluationDispatchCheck;
       reproducer-effectiveness-evaluation = reproducerEffectivenessEvaluationCheck;
+      diagnostic-reproducer-source-admission = pkgs.runCommand
+        "diagnostic-reproducer-source-admission" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v test_reproducer_evaluation.DiagnosticAdapterTests
+          touch "$out"
+        '';
+      aarch64-reproducer-concrete-dependencies = pkgs.runCommand
+        "aarch64-reproducer-concrete-dependencies" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/aarch64_reproducer_evaluation.py} evaluation/aarch64_reproducer_evaluation.py
+          cp ${../evaluation/test_aarch64_reproducer_evaluation.py} evaluation/test_aarch64_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v test_aarch64_reproducer_evaluation
+          touch "$out"
+        '';
+      aarch64-generated-control-plugin-routing = pkgs.runCommand
+        "aarch64-generated-control-plugin-routing" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/aarch64_reproducer_evaluation.py} evaluation/aarch64_reproducer_evaluation.py
+          cp ${../evaluation/test_aarch64_reproducer_evaluation.py} evaluation/test_aarch64_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v test_aarch64_reproducer_evaluation.PluginControlTests
+          touch "$out"
+        '';
+      aarch64-reproducer-entry-context-admission = pkgs.runCommand
+        "aarch64-reproducer-entry-context-admission" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v test_reproducer_evaluation.AArch64AdmissionTests
+          touch "$out"
+        '';
+      reproducer-content-addressed-source-identity = reproducerEffectivenessEvaluationCheck;
       incremental-evaluation-composition = incrementalEvaluationCompositionCheck;
       evaluation-msgpack-default = evaluationMsgpackDefaultCheck;
       docker-artifact-interface = dockerArtifactInterfaceCheck;
+      nix2container-builder-interface = dockerOutputs.builderInterfaceCheck;
       profile-report-timings = evaluationProfileReportCheck;
       evaluation-capture-timeout = evaluationCaptureTimeoutCheck;
       profile-total-excludes-serialization = evaluationPersistenceTimingCheck;
@@ -715,19 +1010,33 @@ in
       pre-realized-emulator-outputs = preRealizedEmulatorCheck;
       evaluation-emulator-trace-format = evaluationEmulatorTraceFormatCheck;
       evaluation-box64-driver = evaluationBox64DriverCheck;
+      box64-whole-program-completion = box64WholeProgramCompletionCheck;
       evaluation-qemu-driver = evaluationQemuDriverCheck;
       qemu-plugin-structured-localization = evaluationQemuPluginDriverCheck;
       native-witness-identity = nativeWitnessIdentityCheck;
       exact-guest-signal-localization = exactGuestSignalLocalizationCheck;
       terminal-validation-cutpoint = terminalValidationCutpointCheck;
       qemu-single-case-evaluation-closures = qemuCaseEvaluationCheck;
+      paper-emulator-guest-host-matrix = paperEmulatorMatrixCheck;
       opt-in-unmatched-transform-skipping = unmatchedTransformSkippingCheck;
       exact-application-mismatch-localization = exactApplicationMismatchLocalizationCheck;
+      exact-trigger-mismatch-localization = exactTriggerMismatchLocalizationCheck;
+      trigger-mismatch-witness-boundaries = triggerMismatchWitnessBoundariesCheck;
       reference-terminal-acceptance = referenceTerminalAcceptanceCheck;
       qemu-application-deterministic-replay = qemuApplicationReplayCheck;
+      qemu-check-configuration-isolation = qemuCheckConfigurationIsolationCheck;
       evaluation-offline-log-validation = evaluationOfflineValidationCheck;
       evaluation-plots = evaluationPlots;
+      selective-application-acceptance = plotOutputs.selectiveApplicationAcceptanceCheck;
+      whole-run-experiment-execution = plotOutputs.wholeRunExperimentExecutionCheck;
+      fatal-diagnostic-eligibility = plotOutputs.fatalDiagnosticEligibilityCheck;
       data-driven-evaluation-plots = evaluationPlots;
+      reproducer-size-measurement-fidelity = plotOutputs.sizeMeasurementCheck;
+      explicit-profile-relocation = plotOutputs.profileRelocationCheck;
+      host-separated-measurement-identity = plotOutputs.hostMeasurementIdentityCheck;
+      exclusive-and-end-to-end-timing-accounting = plotOutputs.timingAccountingCheck;
+      application-trend-ratio-normalization = plotOutputs.applicationTrendRatiosCheck;
+      nix-plot-font-discovery = plotOutputs.fontDiscoveryCheck;
       provenance-bound-reproducer-sizes = evaluationPlots;
       rr-build = focaccia.packages.${system}.rr;
     }
@@ -745,7 +1054,7 @@ in
     lib.mapAttrs (name: runner: {
       type = "app";
       program = "${runner}/bin/${name}";
-    }) qemuCaseEvaluationRunners
+    }) (qemuCaseEvaluationRunners // legacyWitnessEvaluationRunners)
     // {
       evaluate-native = {
         type = "app";

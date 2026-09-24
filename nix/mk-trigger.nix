@@ -51,10 +51,6 @@ stdenv.mkDerivation {
       echo 'Reproducer unexpectedly has an ELF interpreter' >&2
       exit 1
     fi
-    ${pkgs.binutils}/bin/nm reproducer-${trigger.id} \
-      | ${pkgs.gnugrep}/bin/grep -F ' focaccia_trace_start'
-    ${pkgs.binutils}/bin/nm reproducer-${trigger.id} \
-      | ${pkgs.gnugrep}/bin/grep -F ' focaccia_trace_stop'
     runHook postBuild
   '';
 

@@ -2,6 +2,7 @@
 
 """Generate evaluation figures from one retained evaluator run.
 
+Mixed systems for the same benchmark/mode are rejected before plotting.
 Incomplete measured figures are skipped with a warning. Runtime measurements
 and reproducer sizes are never replaced with paper values or zeros. The
 emulator bug-study figure separately presents the paper's fixed, manually
@@ -27,6 +28,12 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.patches import ConnectionPatch, Patch
 from matplotlib.ticker import MultipleLocator
 
+from evaluation import (
+    EvaluationError,
+    read_symbols,
+    require_selective_application_acceptance,
+)
+
 
 FIXED_METADATA = {"CreationDate": None}
 PAPER_ONE_COLUMN = (3.335, 2.3)
@@ -50,13 +57,23 @@ REPRODUCER_GROUPS = (
 REPRODUCER_SIZE_SCHEMA = "focaccia-reproducer-size-evidence-v1"
 NATIVE_METADATA_SCHEMA = "focaccia-native-evaluation-v2"
 EMULATED_METADATA_SCHEMA = "focaccia-emulated-evaluation-v1"
+ACCOUNTING_NAME = "timing-accounting.json"
 FIGURE_NAMES = (
     "split-overhead-breakdown.pdf",
     "tracing-comparison.pdf",
     "realworld-split-overhead-breakdown.pdf",
+    "application-trend-ratios.pdf",
     "reproducer-code-size.pdf",
     "combined-bug-study.pdf",
 )
+
+# Seconds copied from the paper's numerical source (resources/plots.py:768-770).
+# These are used only as a labelled comparison series, never as replacement data.
+PAPER_APPLICATION_COMPONENTS = {
+    "lua": ((28.52, 270.51, 0.0), (1401.04, 0.0, 31.367)),
+    "curl": ((214.44, 476.70, 0.0), (1347.68, 0.0, 119.367)),
+    "sqlite": ((35.38, 86.64, 0.0), (202.17, 0.0, 10.38)),
+}
 
 # Rounded percentages from the paper's manually reviewed emulator bug study.
 # Unlike runtime and reproducer measurements, these are fixed study results,
@@ -88,6 +105,7 @@ class Measurements:
     def __init__(self, rows: list[dict[str, str]]) -> None:
         samples: dict[tuple[str, str, str], list[float]] = defaultdict(list)
         self.modes: dict[str, set[str]] = defaultdict(set)
+        systems: dict[tuple[str, str], set[str]] = defaultdict(set)
         for row in rows:
             if row.get("status") != "passed" or not row.get("seconds"):
                 continue
@@ -105,6 +123,15 @@ class Measurements:
             if not benchmark or not mode or not component:
                 _warn(f"ignoring incomplete timing row: {row!r}")
                 continue
+            # A mode's components must all describe the same execution system.
+            # Reject ambiguity before averaging or assembling partial profiles.
+            identity = (benchmark, mode)
+            systems[identity].add(row.get("system", ""))
+            if len(systems[identity]) > 1:
+                raise ValueError(
+                    f"ambiguous measurement systems for {benchmark}/{mode}: "
+                    f"{sorted(systems[identity])!r}; provide host-separated evidence"
+                )
             samples[(benchmark, mode, component)].append(seconds)
             self.modes[benchmark].add(mode)
         self.values = {key: statistics.fmean(values) for key, values in samples.items()}
@@ -175,12 +202,34 @@ def load_reproducer_sizes(path: Path | None) -> dict[str, tuple[float, float]]:
         _warn(f"not using reproducer size evidence {path}: unsupported schema")
         return {}
     revision = document.get("focacciaRevision")
-    if (
-        not isinstance(revision, str)
-        or len(revision) != 40
-        or any(character not in "0123456789abcdef" for character in revision)
-    ):
-        _warn(f"not using reproducer size evidence {path}: invalid Focaccia revision")
+    identity = document.get("focacciaSourceIdentity")
+    valid_revision = (
+        isinstance(revision, str)
+        and len(revision) == 40
+        and all(character in "0123456789abcdef" for character in revision)
+    )
+    valid_identity = (
+        isinstance(identity, dict)
+        and identity.get("kind") in {"git-revision", "nix-store-path"}
+        and isinstance(identity.get("value"), str)
+        and (
+            (
+                identity["kind"] == "git-revision"
+                and len(identity["value"]) == 40
+                and all(
+                    character in "0123456789abcdef" for character in identity["value"]
+                )
+            )
+            or (
+                identity["kind"] == "nix-store-path"
+                and identity["value"].startswith("/nix/store/")
+            )
+        )
+    )
+    if not (valid_revision or valid_identity):
+        _warn(
+            f"not using reproducer size evidence {path}: invalid Focaccia source identity"
+        )
         return {}
     encoded_cases = document.get("cases")
     if not isinstance(encoded_cases, dict):
@@ -253,6 +302,7 @@ def _profile_document(
     encoded: dict[str, object],
     *,
     qemu: bool,
+    relocation: tuple[Path, Path] | None = None,
 ) -> dict[str, object] | None:
     encoded_path = encoded.get("profile")
     encoded_hash = encoded.get("profileSha256")
@@ -261,6 +311,14 @@ def _profile_document(
     profile = Path(encoded_path)
     if not profile.is_absolute():
         profile = system_directory / profile
+    elif relocation is not None:
+        old_root, new_root = relocation
+        if profile.is_relative_to(old_root):
+            relative = profile.relative_to(old_root)
+            if ".." in relative.parts:
+                _warn(f"ignoring profile with unsafe relocation path: {profile}")
+                return None
+            profile = new_root / relative
     if not profile.is_file() or _sha256(profile) != encoded_hash:
         _warn(f"ignoring profile with failed provenance: {profile}")
         return None
@@ -271,6 +329,75 @@ def _profile_document(
         _warn(f"ignoring QEMU profile with unsupported schema: {profile}")
         return None
     return document
+
+
+def _evidence_path(
+    encoded: object,
+    system_directory: Path,
+    relocation: tuple[Path, Path] | None,
+) -> Path | None:
+    if not isinstance(encoded, str):
+        return None
+    path = Path(encoded)
+    if ".." in path.parts:
+        return None
+    if not path.is_absolute():
+        return system_directory / path
+    if relocation is not None and path.is_relative_to(relocation[0]):
+        return relocation[1] / path.relative_to(relocation[0])
+    return path
+
+
+def _selective_application_evidence(
+    system_directory: Path,
+    encoded: dict[str, object],
+    benchmark: str,
+    relocation: tuple[Path, Path] | None,
+) -> bool:
+    report_path = _evidence_path(encoded.get("report"), system_directory, relocation)
+    if report_path is None:
+        return False
+    report = _load_json_object(report_path)
+    if report is None:
+        return False
+    report_hash = encoded.get("reportSha256")
+    if report_hash is not None and _sha256(report_path) != report_hash:
+        return False
+    bounds = encoded.get("expectedMismatchRange")
+    subject = encoded.get("expectedMismatchSubject")
+    if bounds is None and encoded.get("expectedValidation") == "mismatch":
+        # Legacy evaluator metadata did not retain its expected range. Recover it
+        # from the hash-bound guest ELF, never from the observed mismatches.
+        contracts = {
+            "curl": ("focaccia_injection_curl_2175", "CF"),
+            "lua": ("focaccia_injection_lua_2495", "R8"),
+            "sqlite": ("focaccia_injection_sqlite_508", "RAX"),
+        }
+        contract = contracts.get(benchmark)
+        binary = _evidence_path(encoded.get("binary"), system_directory, relocation)
+        native = encoded.get("native")
+        if (
+            contract is None
+            or binary is None
+            or not binary.is_file()
+            or _sha256(binary) != encoded.get("binarySha256")
+            or not isinstance(native, dict)
+        ):
+            return False
+        try:
+            symbols = read_symbols(Path("nm"), binary)
+        except (EvaluationError, OSError):
+            return False
+        bounds = [symbols.get(contract[0]), native.get("stopAddress")]
+        subject = contract[1]
+    try:
+        require_selective_application_acceptance(
+            report, encoded.get("expectedValidation"), bounds, subject
+        )
+    except EvaluationError as error:
+        _warn(f"omitting {benchmark}: {error}")
+        return False
+    return True
 
 
 def _csv_timing(
@@ -307,10 +434,13 @@ def _add_verified_profile(
     fields: dict[str, str],
     *,
     qemu: bool,
+    relocation: tuple[Path, Path] | None = None,
 ) -> None:
     keys = {component: (benchmark, mode, component, iteration) for component in fields}
     profile_keys.update(keys.values())
-    document = _profile_document(system_directory, encoded, qemu=qemu)
+    document = _profile_document(
+        system_directory, encoded, qemu=qemu, relocation=relocation
+    )
     if document is None:
         _warn(f"omitting {benchmark}/{mode} iteration {iteration}: profile unavailable")
         return
@@ -353,6 +483,7 @@ def _verified_profile_rows(
     system_directory: Path,
     metadata: dict[str, object],
     csv_rows: list[dict[str, str]],
+    relocation: tuple[Path, Path] | None = None,
 ) -> tuple[
     set[str],
     set[tuple[str, str, str, int]],
@@ -400,6 +531,7 @@ def _verified_profile_rows(
                 if isinstance(captures, dict):
                     for mode, capture_value in captures.items():
                         if isinstance(mode, str) and isinstance(capture_value, dict):
+                            before = len(profile_rows)
                             _add_verified_profile(
                                 profile_rows,
                                 profile_keys,
@@ -411,7 +543,60 @@ def _verified_profile_rows(
                                 iteration,
                                 native_fields,
                                 qemu=False,
+                                relocation=relocation,
                             )
+                            if len(profile_rows) != before:
+                                profile = _profile_document(
+                                    system_directory,
+                                    capture_value,
+                                    qemu=False,
+                                    relocation=relocation,
+                                )
+                                timings = profile.get("timings") if profile else None
+                                serialization = capture_value.get(
+                                    "serializationSeconds"
+                                )
+                                capture = capture_value.get("captureProcessSeconds")
+                                trace = (
+                                    timings.get("traceSeconds")
+                                    if isinstance(timings, dict)
+                                    else None
+                                )
+                                profile_serialization = (
+                                    timings.get("serializationSeconds")
+                                    if isinstance(timings, dict)
+                                    else None
+                                )
+                                if (
+                                    isinstance(serialization, (int, float))
+                                    and isinstance(capture, (int, float))
+                                    and isinstance(trace, (int, float))
+                                    and serialization == profile_serialization
+                                    and capture >= trace + serialization
+                                ):
+                                    for component, value in (
+                                        ("serialization", serialization),
+                                        ("capture", capture),
+                                        (
+                                            "setup-residual",
+                                            capture - trace - serialization,
+                                        ),
+                                    ):
+                                        profile_rows.append(
+                                            {
+                                                "benchmark": benchmark,
+                                                "mode": mode,
+                                                "component": component,
+                                                "seconds": str(value),
+                                                "iteration": str(iteration),
+                                                "status": "passed",
+                                                "detail": "",
+                                            }
+                                        )
+                                else:
+                                    _warn(
+                                        f"omitting end-to-end accounting for {benchmark}/{mode}: invalid or negative residual"
+                                    )
                     continue
                 mode = (
                     "native-selective"
@@ -429,10 +614,19 @@ def _verified_profile_rows(
                     iteration,
                     native_fields,
                     qemu=False,
+                    relocation=relocation,
                 )
             elif role == "qemu":
                 mode = case_value.get("emulator")
                 if isinstance(mode, str):
+                    if benchmark in APPLICATIONS:
+                        if not _selective_application_evidence(
+                            system_directory, item_value, benchmark, relocation
+                        ):
+                            _warn(
+                                f"omitting {benchmark}/{mode}: validation evidence failed"
+                            )
+                            continue
                     _add_verified_profile(
                         profile_rows,
                         profile_keys,
@@ -444,11 +638,17 @@ def _verified_profile_rows(
                         iteration,
                         qemu_fields,
                         qemu=True,
+                        relocation=relocation,
                     )
     return allowed, profile_keys, profile_rows
 
 
-def load_measurements(root: Path) -> Measurements:
+def load_measurements(root: Path, *, relocate_from: Path | None = None) -> Measurements:
+    if relocate_from is not None and (
+        not relocate_from.is_absolute() or ".." in relocate_from.parts
+    ):
+        raise ValueError("relocate_from must be an absolute run root without '..'")
+    relocation = (relocate_from, root) if relocate_from is not None else None
     paths = [
         *sorted((root / "native").glob("*/results.csv")),
         *sorted((root / "emulated" / "qemu").glob("*/results.csv")),
@@ -481,9 +681,11 @@ def load_measurements(root: Path) -> Measurements:
         with path.open(newline="", encoding="utf-8") as source:
             csv_rows = list(csv.DictReader(source))
         allowed, profile_keys, profile_rows = _verified_profile_rows(
-            path.parent, metadata, csv_rows
+            path.parent, metadata, csv_rows, relocation
         )
         for row in csv_rows:
+            # Selective QEMU samples enter only via the report/profile gate;
+            # never rescue stale, unknown-mode or extra-iteration CSV rows.
             try:
                 key = (
                     row["benchmark"],
@@ -493,9 +695,15 @@ def load_measurements(root: Path) -> Measurements:
                 )
             except (KeyError, TypeError, ValueError):
                 continue
-            if row.get("benchmark") in allowed and key not in profile_keys:
-                rows.append(row)
-        rows.extend(profile_rows)
+            if (
+                row.get("benchmark") in allowed
+                and key not in profile_keys
+                and not (
+                    expected_role == "qemu" and row.get("benchmark") in APPLICATIONS
+                )
+            ):
+                rows.append({**row, "system": expected_system})
+        rows.extend({**row, "system": expected_system} for row in profile_rows)
     return Measurements(rows)
 
 
@@ -735,6 +943,54 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
     return _save(figure, output, "realworld-split-overhead-breakdown.pdf")
 
 
+def application_trend_ratios(
+    data: Measurements,
+) -> tuple[list[str], list[float], list[float]]:
+    """Return paper/current QEMU-to-native ratios on one shared definition."""
+    labels: list[str] = []
+    paper: list[float] = []
+    current: list[float] = []
+    for application in APPLICATIONS:
+        native = data.components(
+            application, "native-selective", ("concrete", "symbolic", "validation")
+        )
+        qemu_mode = data.qemu_mode(application, ("execution", "tracing", "validation"))
+        qemu = (
+            data.components(
+                application, qemu_mode, ("execution", "tracing", "validation")
+            )
+            if qemu_mode is not None
+            else None
+        )
+        if native is None or qemu is None:
+            continue
+        paper_native, paper_qemu = PAPER_APPLICATION_COMPONENTS[application]
+        labels.append(application.capitalize())
+        paper.append(sum(paper_qemu) / sum(paper_native))
+        current.append(sum(qemu) / sum(native))
+    return labels, paper, current
+
+
+def plot_application_trends(data: Measurements, output: Path) -> Path | None:
+    labels, paper, current = application_trend_ratios(data)
+    if not labels:
+        _warn("not generating application-trend-ratios.pdf: no complete samples")
+        return None
+
+    positions = np.arange(len(labels))
+    width = 0.36
+    figure, axis = plt.subplots(figsize=PAPER_ONE_COLUMN)
+    axis.bar(positions - width / 2, paper, width, label="Paper", color=COLORS[0])
+    axis.bar(positions + width / 2, current, width, label="Current", color=COLORS[1])
+    axis.set_xticks(positions, labels)
+    axis.set_ylabel("QEMU / native runtime")
+    axis.axhline(1, color="black", linewidth=0.7)
+    axis.legend(frameon=False)
+    axis.set_ylim(0, max(paper + current) * 1.12)
+    figure.tight_layout()
+    return _save(figure, output, "application-trend-ratios.pdf")
+
+
 def plot_full_curl(data: Measurements, output: Path) -> Path | None:
     native_names = ("concrete", "symbolic", "validation")
     qemu_names = ("execution", "tracing", "validation")
@@ -761,11 +1017,13 @@ def plot_full_curl(data: Measurements, output: Path) -> Path | None:
 
     rows = np.asarray((cross_validated, speculative, qemu)) / 60
     labels = ("Cross\nValidated", "Speculative", "QEMU")
-    components = ("Concrete", "Symbolic", "Validation")
-    hatches = ("\\", "x", "O")
-    figure, axes = plt.subplots(
-        3, figsize=(PAPER_ONE_COLUMN[0], 1.55), sharex=True
+    components = (
+        "Concrete (exclusive)",
+        "Symbolic (exclusive)",
+        "Validation (exclusive)",
     )
+    hatches = ("\\", "x", "O")
+    figure, axes = plt.subplots(3, figsize=(PAPER_ONE_COLUMN[0], 1.55), sharex=True)
     handles: list[object] = []
     maximum = max(sum(row) for row in rows) * 1.1
 
@@ -785,7 +1043,21 @@ def plot_full_curl(data: Measurements, output: Path) -> Path | None:
             if row_index == 0:
                 handles.append(bars[0])
             left += value
-        axis.text(left, 0, f" {int(left)}", va="center", ha="left", fontsize=8)
+        mode = (
+            "native-full-cross-validated",
+            "native-full-speculative",
+            qemu_mode,
+        )[row_index]
+        wall = data.get("curl-full", mode, "capture" if row_index < 2 else "total")
+        suffix = f"; end-to-end {wall / 60:.2f}" if wall is not None else ""
+        axis.text(
+            left,
+            0,
+            f" {left:.2f} exclusive{suffix}",
+            va="center",
+            ha="left",
+            fontsize=7,
+        )
         axis.set_ylabel(label, fontsize=8, rotation=0, va="center", ha="right")
         axis.set_yticks([])
         axis.set_xticks([])
@@ -863,8 +1135,7 @@ def plot_reproducer_sizes(
         gridspec_kw={"width_ratios": [count for _, count in populated]},
     )
     axes = axes_value[0]
-    maximum = 50.0
-    clipped_maximum = maximum - 1.0
+    maximum = max(50.0, max(max(values) for _, _, values in available) * 1.15)
     for axis_index, (category, _) in enumerate(populated):
         axis = axes[axis_index]
         category_rows = [item for item in available if item[0] == category]
@@ -874,7 +1145,7 @@ def plot_reproducer_sizes(
         width = 0.35
         axis.bar(
             x - width / 2,
-            np.minimum(guest, clipped_maximum),
+            guest,
             width,
             color=COLORS[0],
             edgecolor="black",
@@ -883,7 +1154,7 @@ def plot_reproducer_sizes(
         )
         axis.bar(
             x + width / 2,
-            np.minimum(minimized, clipped_maximum),
+            minimized,
             width,
             color=COLORS[1],
             edgecolor="black",
@@ -893,7 +1164,7 @@ def plot_reproducer_sizes(
         for position, value in zip(x - width / 2, guest):
             axis.text(
                 position,
-                min(value, clipped_maximum),
+                value,
                 f"{value:.1f}",
                 ha="center",
                 va="bottom",
@@ -1071,6 +1342,80 @@ def plot_combined_bug_study(output: Path) -> Path:
     return _save(fig, output, "combined-bug-study.pdf")
 
 
+def write_timing_accounting(data: Measurements, output: Path) -> Path:
+    """Write denominators without converting exclusive components into wall time."""
+    cases: dict[str, object] = {}
+    modes = (
+        (
+            "native-cross-validated",
+            "curl-full",
+            "native-full-cross-validated",
+            ("concrete", "symbolic", "validation"),
+            "capture",
+        ),
+        (
+            "native-speculative",
+            "curl-full",
+            "native-full-speculative",
+            ("concrete", "symbolic", "validation"),
+            "capture",
+        ),
+    )
+    for label, benchmark, mode, names, wall_name in modes:
+        components = data.components(benchmark, mode, names)
+        trace = data.get(benchmark, mode, "total")
+        serialization = data.get(benchmark, mode, "serialization")
+        wall = data.get(benchmark, mode, wall_name)
+        if components is None or trace is None:
+            continue
+        trace_residual = trace - sum(components)
+        if trace_residual < 0:
+            raise ValueError(f"negative trace residual for {benchmark}/{mode}")
+        entry: dict[str, object] = {
+            "exclusiveComponentsSeconds": dict(zip(names, components)),
+            "exclusiveSumSeconds": sum(components),
+            "traceWallSeconds": trace,
+            "traceResidualSeconds": trace_residual,
+        }
+        if serialization is not None and wall is not None:
+            if wall - trace - serialization < 0:
+                raise ValueError(f"negative setup residual for {benchmark}/{mode}")
+            entry.update(
+                {
+                    "serializationSeconds": serialization,
+                    "setupResidualSeconds": wall - trace - serialization,
+                    "endToEndWallSeconds": wall,
+                }
+            )
+        cases[label] = entry
+    cross = cases.get("native-cross-validated")
+    speculative = cases.get("native-speculative")
+    speedups: dict[str, float] = {}
+    if isinstance(cross, dict) and isinstance(speculative, dict):
+        for key, label in (
+            ("exclusiveSumSeconds", "exclusiveComponents"),
+            ("traceWallSeconds", "traceWall"),
+            ("endToEndWallSeconds", "endToEndWall"),
+        ):
+            if key in cross and key in speculative:
+                speedups[label] = float(cross[key]) / float(speculative[key])
+    document = {
+        "schema": "focaccia-timing-accounting-v1",
+        "componentContract": "exclusive-components-v1",
+        "paperLegacy": {
+            "equivalentToCurrentAccounting": False,
+            "note": "Hard-coded rounded legacy counters; raw end-to-end wall and serialization boundary are unavailable.",
+            "nativeCrossValidatedMinutes": [28, 9, 1],
+            "nativeSpeculativeMinutes": [4, 9, 0],
+        },
+        "cases": cases,
+        "speedups": speedups,
+    }
+    destination = output / ACCOUNTING_NAME
+    destination.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+    return destination
+
+
 def make_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1080,6 +1425,12 @@ def make_argparser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help="Figure directory (default: <input>/figures)",
+    )
+    parser.add_argument(
+        "--relocate-from",
+        type=Path,
+        metavar="OLD_RUN_ROOT",
+        help="Explicitly map absolute profile paths under this old root to --input",
     )
     parser.add_argument(
         "--reproducer-sizes",
@@ -1093,24 +1444,34 @@ def make_argparser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = make_argparser().parse_args()
+    parser = make_argparser()
+    args = parser.parse_args()
+    if args.relocate_from is not None and (
+        not args.relocate_from.is_absolute() or ".." in args.relocate_from.parts
+    ):
+        parser.error("--relocate-from must be an absolute run root without '..'")
+    try:
+        measurements = load_measurements(args.input, relocate_from=args.relocate_from)
+    except ValueError as error:
+        parser.error(str(error))
     output = args.output or args.input / "figures"
     output.mkdir(parents=True, exist_ok=True)
-    for name in FIGURE_NAMES:
+    for name in (*FIGURE_NAMES, ACCOUNTING_NAME):
         (output / name).unlink(missing_ok=True)
     _configure_matplotlib()
-    measurements = load_measurements(args.input)
     generated = [
         figure
         for figure in (
             plot_trigger_overhead(measurements, output),
             plot_full_curl(measurements, output),
             plot_selective_applications(measurements, output),
+            plot_application_trends(measurements, output),
             plot_reproducer_sizes(load_reproducer_sizes(args.reproducer_sizes), output),
             plot_combined_bug_study(output),
         )
         if figure is not None
     ]
+    generated.append(write_timing_accounting(measurements, output))
     for figure in generated:
         print(figure)
     return 0

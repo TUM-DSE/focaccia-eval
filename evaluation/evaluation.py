@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,10 +107,15 @@ class EmulatorCase:
     workload_kind: str | None = None
     trace_mode: str | None = None
     expected_mismatch_source_symbol: str | None = None
+    expected_mismatch_source_address: int | None = None
     expected_mismatch_subject: str | None = None
+    expected_mismatch_source_offset: int | None = None
+    expected_mismatch_length: int | None = None
+    expected_mismatch_code: str | None = None
     validation_cutpoint: str | None = None
     expected_terminal_signal: str | None = None
     expected_fault_symbol: str | None = None
+    qemu_cpu_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +134,7 @@ class EvaluationConfig:
     applications: dict[str, Application]
     emulators: dict[str, EmulatorVariant]
     emulator_cases: dict[str, EmulatorCase]
+    trigger_trace_mode: str = "whole-program"
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +307,9 @@ def load_config(path: Path) -> EvaluationConfig:
     replay_preflight_program = _required_string(
         document, "replayPreflightProgram", "Evaluation configuration"
     )
+    trigger_trace_mode = document.get("triggerTraceMode", "whole-program")
+    if trigger_trace_mode not in {"whole-program", "legacy-witness"}:
+        raise EvaluationError("Unsupported triggerTraceMode.")
     encoded_triggers = document.get("triggers")
     encoded_applications = document.get("applications")
     encoded_emulators = document.get("emulators")
@@ -452,16 +462,41 @@ def load_config(path: Path) -> EvaluationConfig:
                 raise EvaluationError(
                     f"{context} has unsupported traceMode {trace_mode!r}."
                 )
+        ordinary_gdb_mismatch = (
+            expectation == "mismatch"
+            and kind == "trigger"
+            and emulators[emulator].backend == "qemu-gdb"
+            and expected_terminal_signal is None
+        )
         if expectation == "mismatch" and (
-            kind == "application" or emulators[emulator].backend == "qemu-plugin"
+            kind == "application"
+            or emulators[emulator].backend == "qemu-plugin"
+            or ordinary_gdb_mismatch
         ):
-            expected_mismatch_source_symbol = _required_string(
-                encoded, "expectedMismatchSourceSymbol", context
-            )
-            expected_mismatch_subject = _required_string(
-                encoded, "expectedMismatchSubject", context
-            )
-        emulator_cases[identifier] = EmulatorCase(
+            if (
+                not ordinary_gdb_mismatch
+                or "expectedMismatchSourceAddress" not in encoded
+            ):
+                expected_mismatch_source_symbol = _required_string(
+                    encoded, "expectedMismatchSourceSymbol", context
+                )
+            if not ordinary_gdb_mismatch or encoded.get("expectedMismatchCode") != (
+                "memory-content-mismatch"
+            ):
+                expected_mismatch_subject = _required_string(
+                    encoded, "expectedMismatchSubject", context
+                )
+            else:
+                expected_mismatch_subject = encoded.get("expectedMismatchSubject")
+        qemu_cpu_model = encoded.get("qemuCpuModel")
+        if qemu_cpu_model is not None and (
+            kind != "trigger"
+            or emulators[emulator].backend != "qemu-gdb"
+            or not isinstance(qemu_cpu_model, str)
+            or not qemu_cpu_model
+        ):
+            raise EvaluationError(f"{context} has an invalid qemuCpuModel.")
+        case = EmulatorCase(
             identifier=identifier,
             kind=kind,
             trigger=_required_string(encoded, "trigger", context),
@@ -474,11 +509,21 @@ def load_config(path: Path) -> EvaluationConfig:
             workload_kind=workload_kind,
             trace_mode=trace_mode,
             expected_mismatch_source_symbol=expected_mismatch_source_symbol,
+            expected_mismatch_source_address=encoded.get(
+                "expectedMismatchSourceAddress"
+            ),
             expected_mismatch_subject=expected_mismatch_subject,
+            expected_mismatch_source_offset=encoded.get("expectedMismatchSourceOffset"),
+            expected_mismatch_length=encoded.get("expectedMismatchLength"),
+            expected_mismatch_code=encoded.get("expectedMismatchCode"),
             validation_cutpoint=validation_cutpoint,
             expected_terminal_signal=expected_terminal_signal,
             expected_fault_symbol=expected_fault_symbol,
+            qemu_cpu_model=qemu_cpu_model,
         )
+        if ordinary_gdb_mismatch:
+            _require_trigger_mismatch_contract(case)
+        emulator_cases[identifier] = case
 
     return EvaluationConfig(
         role=role,
@@ -495,6 +540,7 @@ def load_config(path: Path) -> EvaluationConfig:
         applications=applications,
         emulators=emulators,
         emulator_cases=emulator_cases,
+        trigger_trace_mode=trigger_trace_mode,
     )
 
 
@@ -720,22 +766,26 @@ def evaluate_trigger(
     if trigger.witness_sha256 is not None:
         metadata["witnessSha256"] = trigger.witness_sha256
 
-    try:
-        start, stop = resolve_trace_bounds(config, captured_trigger)
-    except EvaluationError as error:
-        rows.append(
-            result_row(
-                trigger.identifier,
-                "native-cross-validated",
-                "setup",
-                None,
-                iteration,
-                "failed",
-                str(error),
+    metadata["traceMode"] = config.trigger_trace_mode
+    capture_scope = ("--whole-program",)
+    if config.trigger_trace_mode == "legacy-witness":
+        try:
+            start, stop = resolve_trace_bounds(config, captured_trigger)
+        except EvaluationError as error:
+            rows.append(
+                result_row(
+                    trigger.identifier,
+                    "native-cross-validated",
+                    "setup",
+                    None,
+                    iteration,
+                    "failed",
+                    str(error),
+                )
             )
-        )
-        return rows, metadata, False
-    metadata.update({"startAddress": start, "stopAddress": stop})
+            return rows, metadata, False
+        metadata.update({"startAddress": start, "stopAddress": stop})
+        capture_scope = ("--start-address", hex(start), "--stop-address", hex(stop))
 
     baseline = run_process((str(binary),))
     (logs_directory / f"{trigger.identifier}-{iteration}-execution.log").write_text(
@@ -763,10 +813,7 @@ def evaluate_trigger(
     capture_command = (
         str(config.capture_program),
         "--cross-validate",
-        "--start-address",
-        hex(start),
-        "--stop-address",
-        hex(stop),
+        *capture_scope,
         "--output",
         str(oracle),
         "--profile-report",
@@ -1120,6 +1167,7 @@ def _capture_full_application_mode(
         _wait_for_listener(rr_process, rr_port, "RR replay server")
         command = (
             str(config.capture_program),
+            "--whole-program",
             "--remote",
             f"127.0.0.1:{rr_port}",
             "--deterministic-log",
@@ -1497,6 +1545,7 @@ def evaluate_application(
             "argv": list(record_plan.argv),
             "rrTrace": str(rr_trace.relative_to(system_directory)),
             "oracle": str(oracle.relative_to(system_directory)),
+            "oracleSha256": _sha256(oracle),
             "profile": str(profile.relative_to(system_directory)),
             "profileSha256": _sha256(profile),
             "traceSeconds": timings["trace"],
@@ -1734,65 +1783,102 @@ def _emulator_output(variant: EmulatorVariant) -> Path:
     return variant.output
 
 
+def _native_bundle_iteration(
+    input_directory: Path, case: EmulatorCase, iteration: int, kind: str
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    if case.guest_system not in {"x86_64-linux", "aarch64-linux"}:
+        raise EvaluationError("Native bundle requires a supported guest system.")
+    machine = expected_machine(case.guest_system)
+    directory = (input_directory / "native" / case.guest_system).resolve()
+    metadata = _load_json_object(directory / "metadata.json", "native metadata")
+    if (
+        metadata.get("schema") != NATIVE_SCHEMA
+        or metadata.get("role") != "native"
+        or metadata.get("system") != case.guest_system
+        or normalize_machine(_required_string(metadata, "machine", "Native metadata"))
+        != machine
+    ):
+        raise EvaluationError(
+            "Native metadata has invalid schema or producer system identity."
+        )
+    cases = metadata.get("cases")
+    encoded = cases.get(case.trigger) if isinstance(cases, dict) else None
+    if (
+        not isinstance(encoded, dict)
+        or encoded.get("kind") != kind
+        or encoded.get("status") != "passed"
+    ):
+        raise EvaluationError(
+            f"Native {kind} {case.trigger} is absent or did not pass capture with the expected kind."
+        )
+    iterations = encoded.get("iterations")
+    if (
+        type(iteration) is not int
+        or iteration < 0
+        or not isinstance(iterations, list)
+        or iteration >= len(iterations)
+    ):
+        raise EvaluationError(
+            f"Native {kind} {case.trigger} lacks iteration {iteration}."
+        )
+    item = iterations[iteration]
+    if not isinstance(item, dict) or item.get("kind") != kind:
+        raise EvaluationError(
+            f"Native {kind} {case.trigger} iteration {iteration} has invalid kind."
+        )
+    return directory, metadata, item
+
+
+def _native_artifact_path(directory: Path, item: dict[str, Any], field: str) -> Path:
+    relative = Path(_required_string(item, field, "Native artifact"))
+    if relative.is_absolute():
+        raise EvaluationError(f"Native artifact {field} must be bundle-relative.")
+    resolved = (directory / relative).resolve()
+    if not resolved.is_relative_to(directory.resolve()):
+        raise EvaluationError(
+            f"Native artifact {field} escapes the guest-native directory."
+        )
+    return resolved
+
+
+def _native_trace_format(metadata: dict[str, Any], item: dict[str, Any]) -> str:
+    trace_format = _required_string(metadata, "traceFormat", "Native metadata")
+    if (
+        trace_format not in {"msgpack", "json"}
+        or item.get("traceFormat") != trace_format
+    ):
+        raise EvaluationError(
+            "Native trace format metadata is missing, invalid or inconsistent."
+        )
+    return trace_format
+
+
+def _require_native_hash(path: Path, item: dict[str, Any], field: str) -> None:
+    digest = item.get(field)
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise EvaluationError(f"Native artifact has missing or invalid {field}.")
+    if not path.is_file() or _sha256(path) != digest:
+        raise EvaluationError(f"Native artifact hash mismatch for {path} ({field}).")
+
+
 def _native_trigger_artifacts(
     input_directory: Path,
     case: EmulatorCase,
     iteration: int,
 ) -> tuple[Path, Path, int, str, dict[str, Any]]:
-    system_directory = input_directory / "native" / case.guest_system
-    metadata = _load_json_object(
-        system_directory / "metadata.json",
-        f"native metadata for {case.guest_system}",
+    system_directory, metadata, item = _native_bundle_iteration(
+        input_directory, case, iteration, "trigger"
     )
-    if metadata.get("schema") != NATIVE_SCHEMA:
-        raise EvaluationError(
-            f"Native metadata for {case.guest_system} has unsupported schema."
-        )
-    encoded_cases = metadata.get("cases")
-    encoded = (
-        encoded_cases.get(case.trigger) if isinstance(encoded_cases, dict) else None
-    )
-    if not isinstance(encoded, dict) or encoded.get("status") != "passed":
-        raise EvaluationError(
-            f"Native trigger {case.trigger} is absent or did not pass oracle capture."
-        )
-    encoded_iterations = encoded.get("iterations")
-    if not isinstance(encoded_iterations, list) or iteration >= len(encoded_iterations):
-        raise EvaluationError(
-            f"Native trigger {case.trigger} lacks iteration {iteration}."
-        )
-    item = encoded_iterations[iteration]
-    if not isinstance(item, dict):
-        raise EvaluationError(
-            f"Native trigger {case.trigger} iteration {iteration} is malformed."
-        )
-    binary = system_directory / _required_string(item, "binary", "Native trigger")
-    oracle = system_directory / _required_string(item, "oracle", "Native trigger")
+    binary = _native_artifact_path(system_directory, item, "binary")
+    oracle = _native_artifact_path(system_directory, item, "oracle")
     expected_status = item.get("expectedNativeStatus")
     if not isinstance(expected_status, int) or isinstance(expected_status, bool):
         raise EvaluationError(
             "Native trigger metadata has invalid expectedNativeStatus."
         )
-    run_trace_format = metadata.get("traceFormat")
-    iteration_trace_format = item.get("traceFormat")
-    if (
-        run_trace_format is not None
-        and iteration_trace_format is not None
-        and run_trace_format != iteration_trace_format
-    ):
-        raise EvaluationError("Native trace format metadata is inconsistent.")
-    trace_format = iteration_trace_format or run_trace_format or "json"
-    if trace_format not in {"msgpack", "json"}:
-        raise EvaluationError("Native trigger metadata has invalid traceFormat.")
-    artifact_hashes: dict[str, str] = {}
-    for path, hash_name in ((binary, "binarySha256"), (oracle, "oracleSha256")):
-        if not path.is_file():
-            raise EvaluationError(f"Required native artifact does not exist: {path}.")
-        actual_hash = _sha256(path)
-        artifact_hashes[hash_name] = actual_hash
-        encoded_hash = item.get(hash_name)
-        if encoded_hash is not None and encoded_hash != actual_hash:
-            raise EvaluationError(f"Native artifact hash mismatch for {path}.")
+    trace_format = _native_trace_format(metadata, item)
+    _require_native_hash(binary, item, "binarySha256")
+    _require_native_hash(oracle, item, "oracleSha256")
     native_witness_sha256 = item.get("witnessSha256")
     if case.expected_witness_sha256 is not None and (
         native_witness_sha256 != case.expected_witness_sha256
@@ -1811,37 +1897,9 @@ def _native_application_artifacts(
 ) -> NativeApplicationArtifacts:
     if case.workload is None or case.workload_kind is None:
         raise EvaluationError(f"Application case {case.identifier} has no workload.")
-    system_directory = input_directory / "native" / case.guest_system
-    metadata = _load_json_object(
-        system_directory / "metadata.json",
-        f"native metadata for {case.guest_system}",
+    system_directory, metadata, item = _native_bundle_iteration(
+        input_directory, case, iteration, "application"
     )
-    if metadata.get("schema") != NATIVE_SCHEMA:
-        raise EvaluationError(
-            f"Native metadata for {case.guest_system} has unsupported schema."
-        )
-    encoded_cases = metadata.get("cases")
-    encoded = (
-        encoded_cases.get(case.trigger) if isinstance(encoded_cases, dict) else None
-    )
-    if (
-        not isinstance(encoded, dict)
-        or encoded.get("kind") != "application"
-        or encoded.get("status") != "passed"
-    ):
-        raise EvaluationError(
-            f"Native application {case.trigger} is absent or did not pass capture."
-        )
-    encoded_iterations = encoded.get("iterations")
-    if not isinstance(encoded_iterations, list) or iteration >= len(encoded_iterations):
-        raise EvaluationError(
-            f"Native application {case.trigger} lacks iteration {iteration}."
-        )
-    item = encoded_iterations[iteration]
-    if not isinstance(item, dict):
-        raise EvaluationError(
-            f"Native application {case.trigger} iteration {iteration} is malformed."
-        )
     if item.get("workloadKind") != case.workload_kind:
         raise EvaluationError(
             "Native application workload kind does not match the case."
@@ -1851,13 +1909,9 @@ def _native_application_artifacts(
             "Native application trace mode does not match the emulator case."
         )
 
-    binary = system_directory / _required_string(
-        item, "injectedBinary", "Native application"
-    )
-    oracle = system_directory / _required_string(item, "oracle", "Native application")
-    rr_trace = system_directory / _required_string(
-        item, "rrTrace", "Native application"
-    )
+    binary = _native_artifact_path(system_directory, item, "injectedBinary")
+    oracle = _native_artifact_path(system_directory, item, "oracle")
+    rr_trace = _native_artifact_path(system_directory, item, "rrTrace")
     argv_value = item.get("argv")
     if not isinstance(argv_value, list) or not all(
         isinstance(argument, str) for argument in argv_value
@@ -1865,26 +1919,12 @@ def _native_application_artifacts(
         raise EvaluationError("Native application metadata has invalid argv.")
     argv = tuple(argv_value)
 
-    run_trace_format = metadata.get("traceFormat")
-    iteration_trace_format = item.get("traceFormat")
-    if (
-        run_trace_format is not None
-        and iteration_trace_format is not None
-        and run_trace_format != iteration_trace_format
-    ):
-        raise EvaluationError("Native trace format metadata is inconsistent.")
-    trace_format = iteration_trace_format or run_trace_format or "json"
-    if trace_format not in {"msgpack", "json"}:
-        raise EvaluationError("Native application metadata has invalid traceFormat.")
+    trace_format = _native_trace_format(metadata, item)
 
     if not binary.is_file() or not oracle.is_file() or not rr_trace.is_dir():
         raise EvaluationError("Native application artifacts are incomplete.")
-    binary_hash = item.get("injectedBinarySha256")
-    if not isinstance(binary_hash, str) or binary_hash != _sha256(binary):
-        raise EvaluationError("Native injected binary hash does not match metadata.")
-    oracle_hash = item.get("oracleSha256")
-    if oracle_hash is not None and oracle_hash != _sha256(oracle):
-        raise EvaluationError("Native application oracle hash does not match metadata.")
+    _require_native_hash(binary, item, "injectedBinarySha256")
+    _require_native_hash(oracle, item, "oracleSha256")
     workload_hash = item.get("workloadSha256")
     if not isinstance(workload_hash, str) or not case.workload.is_file():
         raise EvaluationError("Application workload identity is unavailable.")
@@ -1996,16 +2036,15 @@ def _require_successful_replay(report: dict[str, Any]) -> None:
         )
 
 
-def _require_complete_terminal_trace(report: dict[str, Any]) -> None:
+def _require_complete_trace(report: dict[str, Any]) -> None:
     trace = report.get("trace")
     if not isinstance(trace, dict):
-        raise EvaluationError("Reference application report has no trace evidence.")
+        raise EvaluationError("Reference validation report has no trace evidence.")
     state_count = trace.get("state_count")
     transform_count = trace.get("transform_count")
     if (
         trace.get("available") is not True
         or trace.get("complete") is not True
-        or trace.get("terminal_reached") is not True
         or not isinstance(state_count, int)
         or isinstance(state_count, bool)
         or not isinstance(transform_count, int)
@@ -2013,8 +2052,152 @@ def _require_complete_terminal_trace(report: dict[str, Any]) -> None:
         or state_count != transform_count + 1
     ):
         raise EvaluationError(
-            "Reference application did not preserve a complete terminal transition trace."
+            "Reference validation did not preserve a complete terminal transition trace."
         )
+
+
+def _require_plugin_terminal_provenance(report: dict[str, Any]) -> None:
+    trace = report.get("trace")
+    completion = report.get("completion")
+    if (
+        not isinstance(trace, dict)
+        or trace.get("available") is not True
+        or not isinstance(completion, dict)
+        or completion.get("scope") != "whole-program"
+        or completion.get("expected_completion_available") is not True
+        or completion.get("observed_completion_available") is not True
+        or completion.get("final_live_boundary_bound") is not True
+        or completion.get("execution_complete") is not True
+        or completion.get("full_run_timing_eligible") is not True
+        or completion.get("terminal_outcome") not in {"match", "mismatch"}
+        or completion.get("terminal_action") not in {"match", "mismatch"}
+    ):
+        raise EvaluationError(
+            "Plugin validation did not preserve process-bound terminal provenance."
+        )
+
+
+def _require_complete_terminal_trace(report: dict[str, Any]) -> None:
+    _require_complete_trace(report)
+    if report["trace"].get("terminal_reached") is not True:
+        raise EvaluationError(
+            "Reference validation did not preserve a complete terminal transition trace."
+        )
+
+
+def _require_whole_program_completion(report: dict[str, Any]) -> None:
+    # This is deliberately the strict reference-correctness contract.  Do not
+    # use experiment execution evidence to turn semantic gaps into completion.
+    _require_complete_trace(report)
+    completion = report.get("completion")
+    if (
+        not isinstance(completion, dict)
+        or completion.get("scope") != "whole-program"
+        or completion.get("complete") is not True
+        or completion.get("full_run_timing_eligible") is not True
+        or any(
+            completion.get(field) is not True
+            for field in (
+                "expected_completion_available",
+                "observed_completion_available",
+                "ordinary_prefix_complete",
+                "final_live_boundary_bound",
+            )
+        )
+        or completion.get("terminal_action") != "match"
+        or completion.get("terminal_outcome") != "match"
+    ):
+        raise EvaluationError(
+            "Full application validation requires explicit whole-program completion "
+            "and full-run timing eligibility."
+        )
+
+
+def require_whole_program_experiment_execution(
+    report: dict[str, Any],
+    *,
+    expected_bug_localized: bool,
+    expected_terminal_signal_localized: bool = False,
+) -> dict[str, object]:
+    """Admit diagnostic whole-run timing without claiming semantic completion.
+
+    The caller must establish localization against its configured bug contract.
+    This gate establishes only that the declared execution ran to independently
+    observed termination, with cardinality and required-action evidence intact.
+    Confirmed/possible/incomplete semantic findings remain counted and visible.
+    """
+    trace = report.get("trace")
+    completion = report.get("completion")
+    validation = report.get("validation")
+    if report.get("schema") != "focaccia-qemu-validation-v1":
+        raise EvaluationError("Whole-run experiment has an unsupported report schema.")
+    if report.get("status") not in {"accepted", "mismatch", "incomplete"}:
+        raise EvaluationError(
+            "Whole-run experiment aborted before a reportable result."
+        )
+    if expected_bug_localized is not True:
+        raise EvaluationError("Whole-run experiment did not localize the expected bug.")
+    if (
+        not isinstance(trace, dict)
+        or trace.get("available") is not True
+        or type(trace.get("state_count")) is not int
+        or type(trace.get("transform_count")) is not int
+        or trace["transform_count"] <= 0
+        or trace["state_count"] != trace["transform_count"] + 1
+    ):
+        raise EvaluationError(
+            "Whole-run experiment is truncated or lacks cardinality evidence."
+        )
+    normal_terminal = (
+        isinstance(completion, dict)
+        and completion.get("scope") == "whole-program"
+        and completion.get("expected_completion_available") is True
+        and completion.get("observed_completion_available") is True
+        and completion.get("final_live_boundary_bound") is True
+        and completion.get("terminal_action") in {"match", "mismatch"}
+        and completion.get("terminal_outcome") in {"match", "mismatch"}
+    )
+    signal_terminal = (
+        isinstance(completion, dict)
+        and completion.get("scope") == "whole-program"
+        and expected_terminal_signal_localized is True
+        and isinstance(report.get("terminal_reason"), dict)
+        and report["terminal_reason"].get("kind") == "signal"
+    )
+    if not normal_terminal and not signal_terminal:
+        raise EvaluationError(
+            "Whole-run experiment lacks independently observed terminal/action evidence."
+        )
+    if (
+        not isinstance(validation, dict)
+        or not isinstance(validation.get("severity_counts"), dict)
+        or not isinstance(validation.get("diagnostic_counts"), dict)
+        or any(
+            type(value) is not int or value < 0
+            for value in validation["severity_counts"].values()
+        )
+        or any(
+            type(value) is not int or value < 0
+            for value in validation["diagnostic_counts"].values()
+        )
+    ):
+        raise EvaluationError("Whole-run experiment has malformed coverage counts.")
+    return {
+        "classification": "diagnostic-whole-run",
+        "timingEligible": True,
+        "executionCompleted": True,
+        "referenceCorrectnessEstablished": False,
+        "allTransitionsValidated": completion.get("complete") is True,
+        "stateCount": trace["state_count"],
+        "transformCount": trace["transform_count"],
+        "confirmedFindingCount": validation["severity_counts"].get("confirmed", 0),
+        "unconfirmedComparisonCount": sum(
+            count
+            for severity, count in validation["severity_counts"].items()
+            if severity != "confirmed"
+        ),
+        "diagnosticCount": sum(validation["diagnostic_counts"].values()),
+    }
 
 
 def _expected_register_mismatch(
@@ -2048,7 +2231,120 @@ def _expected_register_mismatch(
     return False
 
 
-_expected_application_mismatch = _expected_register_mismatch
+def _expected_application_mismatch(
+    report: dict[str, Any],
+    source_address: int,
+    stop_address: int,
+    subject: str,
+) -> bool:
+    """Locate the nominated classified bug without hiding other findings."""
+    validation = report.get("validation")
+    entries = validation.get("entries") if isinstance(validation, dict) else None
+    if not isinstance(entries, list):
+        return False
+    found = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("errors"), list):
+            return False
+        for error in entry["errors"]:
+            if (
+                entry.get("transition_range") == [source_address, stop_address]
+                and isinstance(error, dict)
+                and error.get("severity") == "confirmed"
+                and error.get("code") == "register-content-mismatch"
+                and error.get("subject") == subject
+            ):
+                found += 1
+    return found == 1
+
+
+def require_selective_application_acceptance(
+    report: dict[str, Any],
+    expected: str,
+    mismatch_range: list[int] | None = None,
+    subject: str | None = None,
+) -> None:
+    """Gate an executed selective experiment, not a clean-emulator claim.
+
+    A mismatch run is timing/detection eligible when it reaches the declared
+    terminal boundary with N+1 states, handles replay, and detects the nominated
+    bug once.  Other confirmed findings and explicitly unconfirmed comparisons
+    remain evidence in the report; they do not become reference correctness or
+    an "all transitions validated" claim.  Accepted reference controls remain
+    clean and complete.
+    """
+    if (
+        report.get("schema") != "focaccia-qemu-validation-v1"
+        or not isinstance(expected, str)
+        or expected not in {"accepted", "mismatch"}
+        or report.get("status") != expected
+    ):
+        raise EvaluationError(
+            "Selective application validation status is not expected."
+        )
+    _require_successful_replay(report)
+    _require_complete_trace(report) if expected == "accepted" else None
+    trace = report.get("trace")
+    if (
+        not isinstance(trace, dict)
+        or trace.get("available") is not True
+        or trace.get("terminal_reached") is not True
+        or type(trace.get("state_count")) is not int
+        or type(trace.get("transform_count")) is not int
+        or trace["transform_count"] <= 0
+        or trace["state_count"] != trace["transform_count"] + 1
+    ):
+        raise EvaluationError(
+            "Selective application did not execute the full declared scope with N+1 boundaries."
+        )
+    validation = report.get("validation")
+    if (
+        not isinstance(validation, dict)
+        or not isinstance(validation.get("diagnostics"), list)
+        or not isinstance(validation.get("diagnostic_counts"), dict)
+        or not isinstance(validation.get("severity_counts"), dict)
+        or not isinstance(validation.get("entries"), list)
+        or any(
+            type(value) is not int or value < 0
+            for value in validation["diagnostic_counts"].values()
+        )
+        or any(
+            type(value) is not int or value < 0
+            for value in validation["severity_counts"].values()
+        )
+    ):
+        raise EvaluationError("Selective application has malformed report evidence.")
+    if expected == "mismatch":
+        if (
+            not isinstance(mismatch_range, list)
+            or len(mismatch_range) != 2
+            or any(type(value) is not int for value in mismatch_range)
+            or not isinstance(subject, str)
+            or not subject
+            or type(validation["severity_counts"].get("confirmed")) is not int
+            or validation["severity_counts"].get("confirmed", 0) < 1
+            or not _expected_application_mismatch(report, *mismatch_range, subject)
+        ):
+            raise EvaluationError(
+                "Selective application requires the nominated classified mismatch "
+                "within a fully executed, cardinality-consistent scope."
+            )
+    else:
+        validation = report.get("validation")
+        if (
+            not isinstance(validation, dict)
+            or validation.get("diagnostics") != []
+            or not isinstance(validation.get("entries"), list)
+            or any(
+                not isinstance(entry, dict) or entry.get("errors") != []
+                for entry in validation["entries"]
+            )
+            or any(validation.get("severity_counts", {}).values())
+            or any(validation.get("diagnostic_counts", {}).values())
+        ):
+            raise EvaluationError(
+                "Accepted selective application contains diagnostics."
+            )
 
 
 def _evaluate_qemu_application(
@@ -2246,11 +2542,11 @@ def _evaluate_qemu_application(
     if report.get("schema") != "focaccia-qemu-validation-v1":
         raise EvaluationError("QEMU validator produced an unsupported report schema.")
     _require_successful_replay(report)
+    if case.trace_mode == "full":
+        _require_whole_program_completion(report)
     observed = report.get("status")
     localization_error = ""
     passed = observed == case.expected_validation
-    if passed and case.expected_validation == "accepted":
-        _require_complete_terminal_trace(report)
     if passed and case.expected_validation == "mismatch":
         source_symbol = case.expected_mismatch_source_symbol
         subject = case.expected_mismatch_subject
@@ -2270,6 +2566,12 @@ def _evaluate_qemu_application(
             raise EvaluationError(
                 f"Injected application binary has no symbol {source_symbol!r}."
             )
+        metadata.update(
+            {
+                "expectedMismatchRange": [source_address, stop_address],
+                "expectedMismatchSubject": subject,
+            }
+        )
         passed = _expected_application_mismatch(
             report,
             source_address,
@@ -2279,8 +2581,424 @@ def _evaluate_qemu_application(
         if not passed:
             localization_error = (
                 "expected confirmed register-content-mismatch for "
-                f"{subject} at {hex(source_address)} -> {hex(stop_address)} was absent"
+                f"{subject} at {hex(source_address)} -> {hex(stop_address)} was absent "
+                "or accompanied by unrelated errors or diagnostics"
             )
+    if passed and case.trace_mode != "full":
+        require_selective_application_acceptance(
+            report,
+            case.expected_validation,
+            metadata.get("expectedMismatchRange"),
+            metadata.get("expectedMismatchSubject"),
+        )
+        validation = report["validation"]
+        trace = report["trace"]
+        metadata["selectiveEvidence"] = {
+            "classification": "intended-bug-detected",
+            "timingEligible": True,
+            "referenceCorrectnessEstablished": False,
+            "allTransitionsValidated": trace.get("complete") is True,
+            "stateCount": trace["state_count"],
+            "transformCount": trace["transform_count"],
+            "confirmedFindingCount": validation["severity_counts"].get("confirmed", 0),
+            "unconfirmedComparisonCount": sum(
+                count
+                for severity, count in validation["severity_counts"].items()
+                if severity != "confirmed"
+            ),
+            "diagnosticCount": sum(validation["diagnostic_counts"].values()),
+            "reportSha256": _sha256(report_path),
+        }
+    if passed:
+        try:
+            rows, timings = _qemu_profile_rows(
+                case.trigger,
+                variant.identifier,
+                iteration,
+                profile_path,
+            )
+        except EvaluationError as error:
+            return (
+                [
+                    result_row(
+                        case.trigger,
+                        variant.identifier,
+                        "total",
+                        None,
+                        iteration,
+                        "failed",
+                        str(error),
+                    )
+                ],
+                metadata,
+                False,
+            )
+    else:
+        timings = {}
+        rows = [
+            result_row(
+                case.trigger,
+                variant.identifier,
+                "total",
+                None,
+                iteration,
+                "failed",
+                localization_error
+                or f"validation status {observed!r}, expected {case.expected_validation!r}",
+            )
+        ]
+    metadata.update(
+        {
+            "report": str(report_path),
+            "profile": str(profile_path),
+            "profileSha256": _sha256(profile_path) if passed else None,
+            "profileTimings": timings,
+            "reportSha256": _sha256(report_path),
+            "traceMode": case.trace_mode,
+            "validationProcessSeconds": total,
+            "validationStatus": observed,
+            "expectedValidation": case.expected_validation,
+            "expectedMismatchLocalized": passed
+            if case.expected_validation == "mismatch"
+            else None,
+        }
+    )
+    return rows, metadata, passed
+
+
+def _expected_guest_signal(
+    report: dict[str, Any],
+    signal_name: str,
+    fault_pc: int,
+) -> bool:
+    reason = report.get("terminal_reason")
+    if not isinstance(reason, dict):
+        return False
+    if (
+        reason.get("kind") != "signal"
+        or reason.get("signal") != signal_name
+        or reason.get("pc") != fault_pc
+    ):
+        return False
+    validation = report.get("validation")
+    entries = validation.get("entries") if isinstance(validation, dict) else None
+    if not isinstance(entries, list):
+        return False
+    errors = [
+        error
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("pc") == fault_pc
+        for error in entry.get("errors", ())
+        if isinstance(error, dict)
+    ]
+    return any(
+        error.get("severity") == "confirmed"
+        and error.get("code") == "unexpected-guest-signal"
+        and error.get("subject") == signal_name
+        for error in errors
+    )
+
+
+def _is_memory_address_subject(subject: object) -> bool:
+    return (
+        isinstance(subject, str)
+        and re.fullmatch(r"0x[0-9a-fA-F]{1,16}", subject) is not None
+        and int(subject, 16) < 1 << 64
+    )
+
+
+def _require_trigger_mismatch_contract(
+    case: EmulatorCase,
+) -> tuple[str | None, int, int, str]:
+    symbol = case.expected_mismatch_source_symbol
+    address = case.expected_mismatch_source_address
+    offset = case.expected_mismatch_source_offset if address is None else address
+    length = case.expected_mismatch_length
+    code = case.expected_mismatch_code
+    subject = case.expected_mismatch_subject
+    if (
+        (address is None and (not isinstance(symbol, str) or not symbol))
+        or (address is not None and symbol is not None)
+        or type(offset) is not int
+        or not 0 <= offset < 1 << 64
+        or type(length) is not int
+        or not 0 < length < 1 << 64
+        or not isinstance(code, str)
+        or code not in {"register-content-mismatch", "memory-content-mismatch"}
+        or (
+            code == "register-content-mismatch"
+            and (not isinstance(subject, str) or not subject)
+        )
+        or (
+            code == "memory-content-mismatch"
+            and subject is not None
+            and not _is_memory_address_subject(subject)
+        )
+    ):
+        raise EvaluationError(
+            f"QEMU trigger {case.identifier} mismatch contract is incomplete or invalid."
+        )
+    return symbol, offset, length, code
+
+
+def _expected_trigger_mismatch(
+    report: dict[str, Any], source: int, stop: int, code: str, subject: str | None
+) -> bool:
+    validation = report.get("validation")
+    entries = validation.get("entries") if isinstance(validation, dict) else None
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        bounds = entry.get("transition_range")
+        if (
+            not isinstance(bounds, list)
+            or len(bounds) != 2
+            or any(type(value) is not int for value in bounds)
+            or bounds != [source, stop]
+        ):
+            continue
+        errors = entry.get("errors")
+        if not isinstance(errors, list):
+            continue
+        for error in errors:
+            if (
+                not isinstance(error, dict)
+                or error.get("severity") != "confirmed"
+                or error.get("code") != code
+            ):
+                continue
+            actual_subject = error.get("subject")
+            if code == "register-content-mismatch" and actual_subject == subject:
+                return True
+            if (
+                code == "memory-content-mismatch"
+                and _is_memory_address_subject(actual_subject)
+                and (subject is None or actual_subject == subject)
+            ):
+                return True
+    return False
+
+
+def _evaluate_qemu_trigger(
+    config: EvaluationConfig,
+    case: EmulatorCase,
+    variant: EmulatorVariant,
+    program: Path,
+    input_directory: Path,
+    iteration: int,
+    case_directory: Path,
+    *,
+    skip_unmatched: bool = False,
+) -> tuple[list[dict[str, str | int]], dict[str, Any], bool]:
+    mismatch_contract = None
+    if case.expected_validation == "mismatch" and case.expected_terminal_signal is None:
+        mismatch_contract = _require_trigger_mismatch_contract(case)
+    binary, oracle, _expected_status, trace_format, native_metadata = (
+        _native_trigger_artifacts(
+            input_directory,
+            case,
+            iteration,
+        )
+    )
+    native_scope = native_metadata.get("traceMode", "legacy-witness")
+    if native_scope != config.trigger_trace_mode:
+        raise EvaluationError(
+            "Native trigger trace scope does not match the requested evaluation mode."
+        )
+    mismatch_range = None
+    if mismatch_contract is not None:
+        symbol, offset, length, _code = mismatch_contract
+        # Expectations are post-hoc assertions, never capture bounds or validator inputs.
+        symbol_address = (
+            0 if symbol is None else read_symbols(config.nm_program, binary).get(symbol)
+        )
+        if symbol_address is None:
+            raise EvaluationError(
+                f"QEMU trigger binary has no mismatch symbol {symbol!r}."
+            )
+        if type(symbol_address) is not int or not 0 <= symbol_address < 1 << 64:
+            raise EvaluationError(
+                "QEMU trigger mismatch symbol is not a 64-bit address."
+            )
+        mismatch_range = (symbol_address + offset, symbol_address + offset + length)
+        if any(address >= 1 << 64 for address in mismatch_range):
+            raise EvaluationError(
+                "QEMU trigger mismatch range exceeds 64-bit addresses."
+            )
+    case_directory.mkdir(parents=True, exist_ok=True)
+    qemu_log = case_directory / "qemu.log"
+    validation_log = case_directory / "validation.log"
+    report_path = case_directory / "validation.json"
+    profile_path = case_directory / "profile.json"
+    states_path = case_directory / "states.trace"
+    port = _free_loopback_port()
+    qemu_command = (
+        str(program),
+        *(("-cpu", case.qemu_cpu_model) if case.qemu_cpu_model is not None else ()),
+        "-g",
+        str(port),
+        str(binary),
+    )
+    qemu = ManagedProcess(qemu_command, qemu_log)
+    cutpoint_address = None
+    if (
+        config.trigger_trace_mode == "legacy-witness"
+        and case.validation_cutpoint == "stop"
+    ):
+        cutpoint_address = native_metadata.get("stopAddress")
+        if not isinstance(cutpoint_address, int) or isinstance(cutpoint_address, bool):
+            raise EvaluationError(
+                "Native trigger metadata has no valid terminal validation cutpoint."
+            )
+    started = time.perf_counter()
+    try:
+        with qemu as qemu_process:
+            _wait_for_listener(qemu_process, port, "QEMU GDB server")
+            validation = run_process(
+                (
+                    str(config.validate_qemu_program),
+                    "--remote",
+                    f"127.0.0.1:{port}",
+                    "--symb-trace",
+                    str(oracle),
+                    "--trace-type",
+                    trace_format,
+                    "--executable",
+                    str(binary),
+                    "--output",
+                    str(states_path),
+                    "--report",
+                    str(report_path),
+                    "--profile-report",
+                    str(profile_path),
+                    "--error-level",
+                    "info",
+                    *(
+                        ("--cutpoint-address", hex(cutpoint_address))
+                        if cutpoint_address is not None
+                        else ()
+                    ),
+                    *(("--skip-unmatched",) if skip_unmatched else ()),
+                    *(
+                        ("--qemu-aarch64-cpu-model", case.qemu_cpu_model)
+                        if case.qemu_cpu_model is not None
+                        else ()
+                    ),
+                )
+            )
+    except EvaluationError as error:
+        validation_log.write_text(str(error) + "\n")
+        rows = [
+            result_row(
+                case.trigger,
+                variant.identifier,
+                "validation",
+                None,
+                iteration,
+                "failed",
+                str(error),
+            )
+        ]
+        return rows, {"error": str(error)}, False
+
+    validation_log.write_text(validation.output)
+    total = time.perf_counter() - started
+    metadata: dict[str, Any] = {
+        "backend": variant.backend,
+        "emulator": variant.identifier,
+        "emulatorVersion": variant.version,
+        "binary": str(binary),
+        "binarySha256": _sha256(binary),
+        "oracle": str(oracle),
+        "oracleSha256": _sha256(oracle),
+        "native": native_metadata,
+        "qemuLog": str(qemu_log),
+        "states": str(states_path),
+        "skipUnmatched": skip_unmatched,
+        "validationCutpoint": case.validation_cutpoint,
+        "validationCutpointAddress": cutpoint_address,
+        "qemuCommand": list(qemu_command),
+        "qemuCpuModel": case.qemu_cpu_model,
+    }
+    if validation.returncode != 0:
+        rows = [
+            result_row(
+                case.trigger,
+                variant.identifier,
+                "validation",
+                None,
+                iteration,
+                "failed",
+                f"QEMU validation status {validation.returncode}",
+            )
+        ]
+        return rows, metadata, False
+
+    report = _load_json_object(report_path, "QEMU validation report")
+    if report.get("schema") != "focaccia-qemu-validation-v1":
+        raise EvaluationError("QEMU validator produced an unsupported report schema.")
+    observed = report.get("status")
+    passed = observed == case.expected_validation
+    localization_error = ""
+    if (
+        passed
+        and case.expected_validation == "accepted"
+        and config.trigger_trace_mode == "whole-program"
+    ):
+        _require_whole_program_completion(report)
+    if (
+        passed
+        and case.expected_validation == "accepted"
+        and config.trigger_trace_mode == "legacy-witness"
+    ):
+        _require_complete_terminal_trace(report)
+    if passed and mismatch_contract is not None and mismatch_range is not None:
+        passed = _expected_trigger_mismatch(
+            report,
+            *mismatch_range,
+            mismatch_contract[3],
+            case.expected_mismatch_subject,
+        )
+        if not passed:
+            localization_error = (
+                f"expected confirmed {mismatch_contract[3]} for "
+                f"{case.expected_mismatch_subject or 'a memory address'} at "
+                f"{mismatch_range[0]:#x} -> {mismatch_range[1]:#x} was absent"
+            )
+    if passed and case.expected_terminal_signal is not None:
+        fault_symbol = case.expected_fault_symbol
+        if fault_symbol is None:
+            raise EvaluationError("QEMU signal contract has no fault symbol.")
+        fault_address = read_symbols(config.nm_program, binary).get(fault_symbol)
+        if fault_address is None:
+            raise EvaluationError(
+                f"QEMU trigger binary has no fault symbol {fault_symbol!r}."
+            )
+        passed = _expected_guest_signal(
+            report,
+            case.expected_terminal_signal,
+            fault_address,
+        )
+        if not passed:
+            localization_error = (
+                f"expected {case.expected_terminal_signal} at "
+                f"{fault_symbol} ({fault_address:#x}) was absent"
+            )
+    if (
+        passed
+        and config.trigger_trace_mode == "whole-program"
+        and case.expected_validation == "mismatch"
+    ):
+        execution_evidence = require_whole_program_experiment_execution(
+            report,
+            expected_bug_localized=True,
+            expected_terminal_signal_localized=case.expected_terminal_signal
+            is not None,
+        )
+        execution_evidence["reportSha256"] = _sha256(report_path)
+        metadata["experimentExecutionEvidence"] = execution_evidence
     if passed:
         try:
             rows, timings = _qemu_profile_rows(
@@ -2329,231 +3047,13 @@ def _evaluate_qemu_application(
             "validationStatus": observed,
             "expectedValidation": case.expected_validation,
             "expectedMismatchLocalized": passed
-            if case.expected_validation == "mismatch"
+            if mismatch_contract is not None
             else None,
-        }
-    )
-    return rows, metadata, passed
-
-
-def _expected_guest_signal(
-    report: dict[str, Any],
-    signal_name: str,
-    fault_pc: int,
-) -> bool:
-    reason = report.get("terminal_reason")
-    if not isinstance(reason, dict):
-        return False
-    if (
-        reason.get("kind") != "signal"
-        or reason.get("signal") != signal_name
-        or reason.get("pc") != fault_pc
-    ):
-        return False
-    validation = report.get("validation")
-    entries = validation.get("entries") if isinstance(validation, dict) else None
-    if not isinstance(entries, list):
-        return False
-    errors = [
-        error
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("pc") == fault_pc
-        for error in entry.get("errors", ())
-        if isinstance(error, dict)
-    ]
-    return any(
-        error.get("severity") == "confirmed"
-        and error.get("code") == "unexpected-guest-signal"
-        and error.get("subject") == signal_name
-        for error in errors
-    )
-
-
-def _evaluate_qemu_trigger(
-    config: EvaluationConfig,
-    case: EmulatorCase,
-    variant: EmulatorVariant,
-    program: Path,
-    input_directory: Path,
-    iteration: int,
-    case_directory: Path,
-    *,
-    skip_unmatched: bool = False,
-) -> tuple[list[dict[str, str | int]], dict[str, Any], bool]:
-    binary, oracle, _expected_status, trace_format, native_metadata = (
-        _native_trigger_artifacts(
-            input_directory,
-            case,
-            iteration,
-        )
-    )
-    case_directory.mkdir(parents=True, exist_ok=True)
-    qemu_log = case_directory / "qemu.log"
-    validation_log = case_directory / "validation.log"
-    report_path = case_directory / "validation.json"
-    profile_path = case_directory / "profile.json"
-    states_path = case_directory / "states.trace"
-    port = _free_loopback_port()
-    qemu = ManagedProcess(
-        (str(program), "-g", str(port), str(binary)),
-        qemu_log,
-    )
-    cutpoint_address = None
-    if case.validation_cutpoint == "stop":
-        cutpoint_address = native_metadata.get("stopAddress")
-        if not isinstance(cutpoint_address, int) or isinstance(cutpoint_address, bool):
-            raise EvaluationError(
-                "Native trigger metadata has no valid terminal validation cutpoint."
-            )
-    started = time.perf_counter()
-    try:
-        with qemu as qemu_process:
-            _wait_for_listener(qemu_process, port, "QEMU GDB server")
-            validation = run_process(
-                (
-                    str(config.validate_qemu_program),
-                    "--remote",
-                    f"127.0.0.1:{port}",
-                    "--symb-trace",
-                    str(oracle),
-                    "--trace-type",
-                    trace_format,
-                    "--executable",
-                    str(binary),
-                    "--output",
-                    str(states_path),
-                    "--report",
-                    str(report_path),
-                    "--profile-report",
-                    str(profile_path),
-                    "--error-level",
-                    "info",
-                    *(
-                        ("--cutpoint-address", hex(cutpoint_address))
-                        if cutpoint_address is not None
-                        else ()
-                    ),
-                    *(("--skip-unmatched",) if skip_unmatched else ()),
-                )
-            )
-    except EvaluationError as error:
-        validation_log.write_text(str(error) + "\n")
-        rows = [
-            result_row(
-                case.trigger,
-                variant.identifier,
-                "validation",
-                None,
-                iteration,
-                "failed",
-                str(error),
-            )
-        ]
-        return rows, {"error": str(error)}, False
-
-    validation_log.write_text(validation.output)
-    total = time.perf_counter() - started
-    metadata: dict[str, Any] = {
-        "backend": variant.backend,
-        "emulator": variant.identifier,
-        "emulatorVersion": variant.version,
-        "binary": str(binary),
-        "binarySha256": _sha256(binary),
-        "oracle": str(oracle),
-        "oracleSha256": _sha256(oracle),
-        "native": native_metadata,
-        "qemuLog": str(qemu_log),
-        "states": str(states_path),
-        "skipUnmatched": skip_unmatched,
-        "validationCutpoint": case.validation_cutpoint,
-        "validationCutpointAddress": cutpoint_address,
-    }
-    if validation.returncode != 0:
-        rows = [
-            result_row(
-                case.trigger,
-                variant.identifier,
-                "validation",
-                None,
-                iteration,
-                "failed",
-                f"QEMU validation status {validation.returncode}",
-            )
-        ]
-        return rows, metadata, False
-
-    report = _load_json_object(report_path, "QEMU validation report")
-    if report.get("schema") != "focaccia-qemu-validation-v1":
-        raise EvaluationError("QEMU validator produced an unsupported report schema.")
-    observed = report.get("status")
-    passed = observed == case.expected_validation
-    localization_error = ""
-    if passed and case.expected_terminal_signal is not None:
-        fault_symbol = case.expected_fault_symbol
-        if fault_symbol is None:
-            raise EvaluationError("QEMU signal contract has no fault symbol.")
-        fault_address = read_symbols(config.nm_program, binary).get(fault_symbol)
-        if fault_address is None:
-            raise EvaluationError(
-                f"QEMU trigger binary has no fault symbol {fault_symbol!r}."
-            )
-        passed = _expected_guest_signal(
-            report,
-            case.expected_terminal_signal,
-            fault_address,
-        )
-        if not passed:
-            localization_error = (
-                f"expected {case.expected_terminal_signal} at "
-                f"{fault_symbol} ({fault_address:#x}) was absent"
-            )
-    if passed:
-        try:
-            rows, timings = _qemu_profile_rows(
-                case.trigger,
-                variant.identifier,
-                iteration,
-                profile_path,
-            )
-        except EvaluationError as error:
-            return (
-                [
-                    result_row(
-                        case.trigger,
-                        variant.identifier,
-                        "total",
-                        None,
-                        iteration,
-                        "failed",
-                        str(error),
-                    )
-                ],
-                metadata,
-                False,
-            )
-    else:
-        timings = {}
-        rows = [
-            result_row(
-                case.trigger,
-                variant.identifier,
-                "total",
-                None,
-                iteration,
-                "failed",
-                localization_error
-                or f"validation status {observed!r}, expected {case.expected_validation!r}",
-            )
-        ]
-    metadata.update(
-        {
-            "report": str(report_path),
-            "profile": str(profile_path),
-            "profileSha256": _sha256(profile_path) if passed else None,
-            "profileTimings": timings,
-            "validationProcessSeconds": total,
-            "validationStatus": observed,
-            "expectedValidation": case.expected_validation,
+            "expectedMismatchRange": list(mismatch_range)
+            if mismatch_range is not None
+            else None,
+            "expectedMismatchCode": case.expected_mismatch_code,
+            "expectedMismatchSubject": case.expected_mismatch_subject,
             "expectedTerminalSignal": case.expected_terminal_signal,
             "expectedFaultSymbol": case.expected_fault_symbol,
             "expectedTerminalLocalized": (
@@ -2577,26 +3077,37 @@ def _evaluate_qemu_plugin_trigger(
         _native_trigger_artifacts(input_directory, case, iteration)
     )
     symbols = read_symbols(config.nm_program, binary)
-    start_address = symbols.get("focaccia_trace_start")
-    stop_address = symbols.get("focaccia_trace_stop")
-    if start_address is None or stop_address is None or start_address >= stop_address:
-        raise EvaluationError("QEMU plugin trigger has invalid trace symbol bounds.")
-    if native_metadata.get("startAddress") != start_address or (
-        native_metadata.get("stopAddress") != stop_address
-    ):
-        raise EvaluationError(
-            "Native trigger metadata does not match current symbol bounds."
-        )
+    start_address = None
+    stop_address = None
+    if config.trigger_trace_mode == "legacy-witness":
+        start_address = symbols.get("focaccia_trace_start")
+        stop_address = symbols.get("focaccia_trace_stop")
+        if (
+            start_address is None
+            or stop_address is None
+            or start_address >= stop_address
+        ):
+            raise EvaluationError(
+                "QEMU plugin trigger has invalid trace symbol bounds."
+            )
+        if native_metadata.get("startAddress") != start_address or (
+            native_metadata.get("stopAddress") != stop_address
+        ):
+            raise EvaluationError(
+                "Native trigger metadata does not match current symbol bounds."
+            )
 
     mismatch_symbol = case.expected_mismatch_source_symbol
     mismatch_subject = case.expected_mismatch_subject
-    if mismatch_symbol is None or mismatch_subject is None:
-        raise EvaluationError("QEMU plugin mismatch contract is incomplete.")
-    mismatch_address = symbols.get(mismatch_symbol)
-    if mismatch_address is None:
-        raise EvaluationError(
-            f"QEMU trigger binary has no mismatch symbol {mismatch_symbol!r}."
-        )
+    mismatch_address = None
+    if case.expected_validation == "mismatch":
+        if mismatch_symbol is None or mismatch_subject is None:
+            raise EvaluationError("QEMU plugin mismatch contract is incomplete.")
+        mismatch_address = symbols.get(mismatch_symbol)
+        if mismatch_address is None:
+            raise EvaluationError(
+                f"QEMU trigger binary has no mismatch symbol {mismatch_symbol!r}."
+            )
 
     case_directory.mkdir(parents=True, exist_ok=True)
     qemu_log = case_directory / "qemu.log"
@@ -2604,6 +3115,8 @@ def _evaluate_qemu_plugin_trigger(
     report_path = case_directory / "validation.json"
     profile_path = case_directory / "profile.json"
     states_path = case_directory / "states.trace"
+    terminal_ready_path = case_directory / "plugin-terminal-ready.json"
+    terminal_evidence_path = case_directory / "plugin-terminal-evidence.json"
     socket_directory = Path(os.environ.get("TMPDIR", "/tmp"))
     socket_name = hashlib.sha256(str(case_directory).encode()).hexdigest()[:16]
     socket_path = socket_directory / f"focaccia-{socket_name}.sock"
@@ -2636,26 +3149,31 @@ def _evaluate_qemu_plugin_trigger(
             str(profile_path),
             "--error-level",
             "info",
+            "--plugin-terminal-ready",
+            str(terminal_ready_path),
+            "--plugin-terminal-evidence",
+            str(terminal_evidence_path),
             "--quiet",
         ),
         validation_log,
     )
+    plugin_options = f"{plugin_path},socket={socket_path}"
+    if start_address is not None and stop_address is not None:
+        plugin_options += f",start={start_address:#x},stop={stop_address:#x}"
     qemu_command = (
         str(program),
         "-plugin",
-        (
-            f"{plugin_path},socket={socket_path},"
-            f"start={start_address:#x},stop={stop_address:#x}"
-        ),
+        plugin_options,
         str(binary),
     )
 
     started = time.perf_counter()
     try:
-        try:
-            socket_path.unlink()
-        except FileNotFoundError:
-            pass
+        for stale_path in (socket_path, terminal_ready_path, terminal_evidence_path):
+            try:
+                stale_path.unlink()
+            except FileNotFoundError:
+                pass
         with validator as validator_process:
             deadline = time.monotonic() + SERVER_STARTUP_TIMEOUT_SECONDS
             while not socket_path.is_socket():
@@ -2672,17 +3190,67 @@ def _evaluate_qemu_plugin_trigger(
 
             qemu = ManagedProcess(qemu_command, qemu_log)
             with qemu as qemu_process:
+                terminal_deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+                while not terminal_ready_path.is_file():
+                    if validator_process.poll() is not None:
+                        raise EvaluationError(
+                            f"QEMU plugin validator exited with status "
+                            f"{validator_process.returncode} before terminal readiness."
+                        )
+                    if qemu_process.poll() is not None:
+                        raise EvaluationError(
+                            f"QEMU guest exited with status {qemu_process.returncode} "
+                            "before terminal readiness."
+                        )
+                    if time.monotonic() >= terminal_deadline:
+                        raise EvaluationError(
+                            "Timed out waiting for bound plugin terminal readiness."
+                        )
+                    time.sleep(0.05)
                 try:
-                    validator_status = validator_process.wait(
-                        timeout=PROCESS_TIMEOUT_SECONDS
+                    ready = json.loads(terminal_ready_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    raise EvaluationError(
+                        "Malformed plugin terminal readiness record."
+                    ) from error
+                if (
+                    not isinstance(ready, dict)
+                    or ready.get("schema") != "focaccia-plugin-terminal-ready-v1"
+                    or ready.get("pid") != qemu_process.pid
+                    or ready.get("binarySha256") != _sha256(binary)
+                ):
+                    raise EvaluationError(
+                        "Plugin terminal readiness does not bind the launched guest process and binary."
                     )
-                except subprocess.TimeoutExpired as error:
-                    raise EvaluationError("QEMU plugin validator timed out.") from error
                 try:
                     guest_status = qemu_process.wait(timeout=5)
                 except subprocess.TimeoutExpired as error:
                     raise EvaluationError(
-                        "QEMU guest did not exit after plugin validation completed."
+                        "QEMU guest did not exit after plugin terminal release."
+                    ) from error
+                command_digest = hashlib.sha256(
+                    json.dumps(qemu_command, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                evidence = {
+                    "schema": "focaccia-plugin-terminal-evidence-v1",
+                    "nonce": ready.get("nonce"),
+                    "pid": qemu_process.pid,
+                    "binarySha256": _sha256(binary),
+                    "commandSha256": command_digest,
+                    "returncode": guest_status,
+                }
+                evidence_temporary = terminal_evidence_path.with_name(
+                    f".{terminal_evidence_path.name}.tmp"
+                )
+                evidence_temporary.write_text(
+                    json.dumps(evidence, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                evidence_temporary.replace(terminal_evidence_path)
+                try:
+                    validator_status = validator_process.wait(timeout=5)
+                except subprocess.TimeoutExpired as error:
+                    raise EvaluationError(
+                        "QEMU plugin validator did not consume terminal evidence."
                     ) from error
     except EvaluationError as error:
         rows = [
@@ -2718,6 +3286,10 @@ def _evaluate_qemu_plugin_trigger(
         "plugin": str(plugin_path),
         "startAddress": start_address,
         "stopAddress": stop_address,
+        "pluginTerminalReady": str(terminal_ready_path),
+        "pluginTerminalReadySha256": _sha256(terminal_ready_path),
+        "pluginTerminalEvidence": str(terminal_evidence_path),
+        "pluginTerminalEvidenceSha256": _sha256(terminal_evidence_path),
     }
     if validator_status != 0 or guest_status not in {0, 1}:
         detail = (
@@ -2741,14 +3313,16 @@ def _evaluate_qemu_plugin_trigger(
         raise EvaluationError(
             "QEMU plugin validator produced an unsupported report schema."
         )
-    _require_complete_terminal_trace(report)
+    if case.expected_validation == "mismatch":
+        _require_plugin_terminal_provenance(report)
+    else:
+        _require_whole_program_completion(report)
     observed = report.get("status")
-    localized = _expected_register_mismatch(
-        report,
-        mismatch_address,
-        mismatch_address + 4,
-        mismatch_subject,
-    )
+    localized = None
+    if mismatch_address is not None and mismatch_subject is not None:
+        localized = _expected_register_mismatch(
+            report, mismatch_address, mismatch_address + 4, mismatch_subject
+        )
     expected_guest_status = 1 if case.expected_validation == "mismatch" else 0
     passed = (
         observed == case.expected_validation
@@ -2822,6 +3396,10 @@ def _evaluate_log_trigger(
     iteration: int,
     case_directory: Path,
 ) -> tuple[list[dict[str, str | int]], dict[str, Any], bool]:
+    if config.trigger_trace_mode not in {"legacy-witness", "whole-program"}:
+        raise EvaluationError(
+            "Text-log backend received an unsupported trigger trace mode."
+        )
     binary, oracle, expected_status, trace_format, native_metadata = (
         _native_trigger_artifacts(
             input_directory,
@@ -2836,19 +3414,25 @@ def _evaluate_log_trigger(
 
     environment = os.environ.copy()
     if log_backend == "box64":
-        start_address = native_metadata.get("startAddress")
-        stop_address = native_metadata.get("stopAddress")
-        if (
-            not isinstance(start_address, int)
-            or isinstance(start_address, bool)
-            or not isinstance(stop_address, int)
-            or isinstance(stop_address, bool)
-            or stop_address < start_address
-        ):
-            raise EvaluationError("Native trigger metadata has invalid trace bounds.")
+        if config.trigger_trace_mode == "whole-program":
+            trace_selector = "1"
+        else:
+            start_address = native_metadata.get("startAddress")
+            stop_address = native_metadata.get("stopAddress")
+            if (
+                not isinstance(start_address, int)
+                or isinstance(start_address, bool)
+                or not isinstance(stop_address, int)
+                or isinstance(stop_address, bool)
+                or stop_address < start_address
+            ):
+                raise EvaluationError(
+                    "Native trigger metadata has invalid trace bounds."
+                )
+            trace_selector = f"0x{start_address:x}-0x{stop_address + 1:x}"
         environment.update(
             {
-                "BOX64_TRACE": f"0x{start_address:x}-0x{stop_address + 1:x}",
+                "BOX64_TRACE": trace_selector,
                 "BOX64_TRACE_FILE": "stderr",
                 "BOX64_DYNAREC_TRACE": "1",
                 "BOX64_DYNAREC_DF": "0",
@@ -2856,6 +3440,25 @@ def _evaluate_log_trigger(
         )
     execution = run_process((str(program), str(binary)), env=environment)
     raw_log.write_text(execution.output)
+    execution_evidence = case_directory / "execution-evidence.json"
+    execution_evidence.write_text(
+        json.dumps(
+            {
+                "schema": "focaccia-text-process-evidence-v1",
+                "runId": str(uuid.uuid4()),
+                "binary": str(binary.resolve()),
+                "binarySha256": _sha256(binary),
+                "oracleSha256": _sha256(oracle),
+                "logSha256": _sha256(raw_log),
+                "processState": "exited",
+                "exitStatus": execution.returncode,
+                "expectedExitStatus": expected_status,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     rows = [
         result_row(
             case.trigger,
@@ -2896,6 +3499,8 @@ def _evaluate_log_trigger(
             str(raw_log),
             "--report",
             str(report_path),
+            "--execution-evidence",
+            str(execution_evidence),
         )
     )
     (case_directory / "validation.log").write_text(validation.output)
@@ -2919,7 +3524,13 @@ def _evaluate_log_trigger(
             "Offline validator produced an unsupported report schema."
         )
     observed = report.get("status")
-    passed = observed == case.expected_validation
+    completion = report.get("completion")
+    execution_complete = (
+        isinstance(completion, dict) and completion.get("executionComplete") is True
+    )
+    passed = observed == case.expected_validation and (
+        config.trigger_trace_mode != "whole-program" or execution_complete
+    )
     rows.append(
         result_row(
             case.trigger,
@@ -2938,6 +3549,9 @@ def _evaluate_log_trigger(
             "report": str(report_path),
             "validationStatus": observed,
             "expectedValidation": case.expected_validation,
+            "executionEvidence": str(execution_evidence),
+            "executionEvidenceSha256": _sha256(execution_evidence),
+            "executionComplete": execution_complete,
         }
     )
     return rows, metadata, passed

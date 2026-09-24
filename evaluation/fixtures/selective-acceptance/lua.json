@@ -1,0 +1,307 @@
+{
+  "schema": "focaccia-qemu-validation-v1",
+  "status": "mismatch",
+  "trace": {
+    "available": true,
+    "complete": false,
+    "expected_terminal_pc": 4203794,
+    "state_count": 418673,
+    "terminal_pc": 4203794,
+    "terminal_reached": true,
+    "transform_count": 418672
+  },
+  "replay": {
+    "active": true,
+    "by_outcome": {
+      "handled": 35
+    },
+    "by_strategy": {
+      "execute-and-reconcile": 19,
+      "recorded-replay": 16
+    },
+    "record_count": 35
+  },
+  "validation": {
+    "diagnostic_counts": {
+      "incomplete": 6
+    },
+    "diagnostics": [
+      {
+        "code": "snapshot-register-unavailable",
+        "concrete_index": 418508,
+        "level": "incomplete",
+        "message": "Unable to observe register CS: Backend returned 32 bits for CS; the architecture declares 16..",
+        "transform_index": 418507
+      },
+      {
+        "code": "snapshot-register-unavailable",
+        "concrete_index": 418508,
+        "level": "incomplete",
+        "message": "Unable to observe register DS: Backend returned 32 bits for DS; the architecture declares 16..",
+        "transform_index": 418507
+      },
+      {
+        "code": "snapshot-register-unavailable",
+        "concrete_index": 418508,
+        "level": "incomplete",
+        "message": "Unable to observe register ES: Backend returned 32 bits for ES; the architecture declares 16..",
+        "transform_index": 418507
+      },
+      {
+        "code": "snapshot-register-unavailable",
+        "concrete_index": 418508,
+        "level": "incomplete",
+        "message": "Unable to observe register FS: Backend returned 32 bits for FS; the architecture declares 16..",
+        "transform_index": 418507
+      },
+      {
+        "code": "snapshot-register-unavailable",
+        "concrete_index": 418508,
+        "level": "incomplete",
+        "message": "Unable to observe register GS: Backend returned 32 bits for GS; the architecture declares 16..",
+        "transform_index": 418507
+      },
+      {
+        "code": "snapshot-register-unavailable",
+        "concrete_index": 418508,
+        "level": "incomplete",
+        "message": "Unable to observe register SS: Backend returned 32 bits for SS; the architecture declares 16..",
+        "transform_index": 418507
+      }
+    ],
+    "entries": [
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Register transformations 0x41fe90 -> 0x41fe96 depend on an unresolved environment symbol: Expression ucomisd_cf(XMM0[0:64], @64[RSP + 0x8]) remains unresolved as ucomisd_cf(0x407F900000000000, 0x407F900000000000); a concrete value is required.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4325008,
+        "transition_range": [
+          4325008,
+          4325014
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": null,
+            "message": "Value of register CS changed but is unavailable in the tested destination state.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          },
+          {
+            "code": null,
+            "message": "Value of register DS changed but is unavailable in the tested destination state.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          },
+          {
+            "code": null,
+            "message": "Value of register ES changed but is unavailable in the tested destination state.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          },
+          {
+            "code": null,
+            "message": "Value of register FS changed but is unavailable in the tested destination state.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          },
+          {
+            "code": null,
+            "message": "Value of register GS changed but is unavailable in the tested destination state.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          },
+          {
+            "code": null,
+            "message": "Value of register SS changed but is unavailable in the tested destination state.",
+            "severity": "incomplete",
+            "severity_label": "INCOMPLETE DATA",
+            "subject": null
+          }
+        ],
+        "pc": 4461268,
+        "transition_range": [
+          4461268,
+          4203808
+        ]
+      },
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register R8 is false. Expected 0xffffffffffffffff, actual 0x0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "R8"
+          }
+        ],
+        "pc": 4203790,
+        "transition_range": [
+          4203790,
+          4203794
+        ]
+      }
+    ],
+    "entry_count": 418672,
+    "severity_counts": {
+      "confirmed": 1,
+      "incomplete": 16
+    }
+  }
+}

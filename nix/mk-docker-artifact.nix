@@ -1,5 +1,7 @@
 {
   pkgs,
+  nix2container,
+  dependencyPackages,
   self,
   focaccia,
   system,
@@ -11,34 +13,47 @@
 let
   lib = pkgs.lib;
   tag = if self ? shortRev then self.shortRev else "dirty";
+  stablePackages = [
+    pkgs.bashInteractive
+    pkgs.coreutils
+    pkgs.findutils
+    pkgs.fontconfig
+    pkgs.gnugrep
+    pkgs.gnused
+    pkgs.jq
+    pkgs.libertine
+  ];
   environment = pkgs.buildEnv {
     name = "focaccia-artifact-environment";
-    paths = commandPackages ++ [
-      pkgs.bashInteractive
-      pkgs.coreutils
-      pkgs.findutils
-      pkgs.fontconfig
-      pkgs.gnugrep
-      pkgs.gnused
-      pkgs.jq
-      pkgs.libertine
-    ];
+    paths = commandPackages ++ stablePackages;
     pathsToLink = [
       "/bin"
       "/share/fonts"
     ];
   };
-  image = pkgs.dockerTools.buildLayeredImage {
+  directories = pkgs.runCommand "focaccia-artifact-directories" { } ''
+    mkdir -p "$out/artifacts" "$out/tmp/matplotlib"
+  '';
+  # Keep common runtimes separate from changing evaluation scripts/configuration.
+  dependencies = nix2container.buildLayer {
+    deps = stablePackages ++ dependencyPackages;
+  };
+  image = nix2container.buildImage {
     name = "focaccia-artifact";
     inherit tag;
-    contents = [
+    layers = [ dependencies ];
+    copyToRoot = [
       pkgs.dockerTools.fakeNss
       environment
+      directories
     ];
-    extraCommands = ''
-      mkdir -p artifacts tmp/matplotlib
-      chmod 1777 tmp tmp/matplotlib
-    '';
+    perms = [
+      {
+        path = directories;
+        regex = "^${directories}/tmp(/matplotlib)?$";
+        mode = "1777";
+      }
+    ];
     config = {
       Cmd = [ "${environment}/bin/bash" ];
       Env = [
@@ -63,38 +78,65 @@ let
       };
     };
   };
+  # Descriptor/transport checks need no daemon, registry, native tracing or RR.
+  builderInterfaceCheck =
+    assert image.imageName == "focaccia-artifact";
+    assert image.imageTag == tag;
+    pkgs.runCommand "nix2container-builder-interface"
+      { nativeBuildInputs = [ pkgs.jq ]; }
+      ''
+        jq -e --arg arch '${pkgs.go.GOARCH}' \
+          --arg directories '${directories}' \
+          --arg environment '${environment}' \
+          --slurpfile dependencies '${dependencies}/layers.json' '
+          .version == 1 and .arch == $arch and
+          (.layers | length == 2) and
+          .layers[0] == $dependencies[0][0] and
+          ([.layers[].paths[].path] as $paths |
+            ($paths | length) == ($paths | unique | length)) and
+          ([.layers[1].paths[] | select(.path == $environment) |
+            .options.rewrite.repl] == [""]) and
+          ([.layers[1].paths[] | select(.path == $directories) |
+            .options.perms[] |
+            .regex as $regex |
+            select(.mode == "1777" and
+              ($directories + "/tmp" | test($regex)) and
+              ($directories + "/tmp/matplotlib" | test($regex)) and
+              ($directories + "/artifacts" | test($regex) | not))] | length == 1) and
+          all(.layers[]; .digest | test("^sha256:[0-9a-f]{64}$")) and
+          all(.layers[]; has("layer-path") | not)
+        ' ${image} > /dev/null
+        test -d '${directories}/artifacts'
+        test -d '${directories}/tmp/matplotlib'
+        test -x ${image.copyToDockerDaemon}/bin/copy-to-docker-daemon
+        test -x ${image.copyToRegistry}/bin/copy-to-registry
+        touch "$out"
+      '';
   interfaceCheck =
     pkgs.runCommand "docker-artifact-interface"
       {
         nativeBuildInputs = [
-          pkgs.gnutar
           pkgs.jq
         ];
       }
       ''
-        mkdir image
-        tar -xf ${image} -C image
-        config_file="$(jq -r '.[0].Config' image/manifest.json)"
-        jq -e \
-          --arg tag 'focaccia-artifact:${tag}' \
-          '.[0].RepoTags == [$tag]' \
-          image/manifest.json >/dev/null
         jq -e \
           --arg shell '${environment}/bin/bash' \
           --arg fontconfig 'FONTCONFIG_FILE=${fontsConf}' \
           --arg path 'PATH=${environment}/bin' \
           --arg system '${system}' \
-          '.config.Entrypoint == null and
-           .config.Cmd == [$shell] and
-           .config.WorkingDir == "/artifacts" and
-           .config.Volumes["/artifacts"] == {} and
-           .config.Labels["io.focaccia.system"] == $system and
-           (.config.Env | index("HOME=/tmp")) != null and
-           (.config.Env | index("TMPDIR=/tmp")) != null and
-           (.config.Env | index($fontconfig)) != null and
-           (.config.Env | index("MPLCONFIGDIR=/tmp/matplotlib")) != null and
-           (.config.Env | index($path)) != null' \
-          "image/$config_file" >/dev/null
+          '.["image-config"] | .Entrypoint == null and
+           .Cmd == [$shell] and
+           .WorkingDir == "/artifacts" and
+           .Volumes["/artifacts"] == {} and
+           .Labels["io.focaccia.system"] == $system and
+           (.Env | index("HOME=/tmp")) != null and
+           (.Env | index("TMPDIR=/tmp")) != null and
+           (.Env | index($fontconfig)) != null and
+           (.Env | index("MPLCONFIGDIR=/tmp/matplotlib")) != null and
+           (.Env | index($path)) != null and
+           (.Env | index("PYTHONUNBUFFERED=1")) != null' \
+          ${image} >/dev/null
 
         export PATH=${environment}/bin
         export HOME="$TMPDIR"
@@ -117,6 +159,7 @@ in
     environment
     image
     interfaceCheck
+    builderInterfaceCheck
     tag
     ;
 }

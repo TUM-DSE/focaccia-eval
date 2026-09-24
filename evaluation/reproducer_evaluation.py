@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Generate and verify the eight x86-64 reproducers measured in Figure 8."""
+"""Generate and verify x86-64 Table 2 and SQLite reproducers."""
 
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ from focaccia.persistence import (
 from focaccia.reproducer import (
     EntryPrefix,
     Reproducer,
+    ReproducerBasicBlockError,
+    ReproducerFragmentError,
+    ReproducerMemoryError,
+    ReproducerRegisterError,
     extract_executable_fragment,
     single_transition_reproducer_trace,
 )
@@ -35,7 +39,10 @@ from focaccia.symbolic import SymbolicTransform
 import evaluation as common
 
 
-CONFIG_SCHEMA = "focaccia-reproducer-evaluation-config-v1"
+CONFIG_SCHEMAS = {
+    "focaccia-reproducer-evaluation-config-v1",
+    "focaccia-reproducer-evaluation-config-v2",
+}
 METADATA_SCHEMA = "focaccia-reproducer-evaluation-v1"
 SIZE_EVIDENCE_SCHEMA = "focaccia-reproducer-size-evidence-v1"
 QEMU_REPORT_SCHEMA = "focaccia-qemu-validation-v1"
@@ -81,13 +88,14 @@ class CaseConfig:
     primary_error: ErrorSignature
     source_symbol: str | None
     entry_prefix_symbol: str | None
+    required_registers: tuple[str, ...]
     condition_code_seed: int | None
 
 
 @dataclass(frozen=True, slots=True)
 class Config:
     system: str
-    focaccia_revision: str
+    focaccia_source_identity: dict[str, str]
     compiler: Path
     nm: Path
     validate_qemu: Path
@@ -124,9 +132,45 @@ def _parse_error_signature(document: object, context: str) -> ErrorSignature:
     )
 
 
+def _parse_source_identity(document: dict[str, Any], schema: object) -> dict[str, str]:
+    if schema == "focaccia-reproducer-evaluation-config-v1":
+        revision = _required_string(document, "focacciaRevision", "Reproducer config")
+        if len(revision) != 40 or any(
+            character not in HEX_DIGITS for character in revision
+        ):
+            raise ReproducerEvaluationError(
+                "Reproducer config has an invalid Focaccia revision."
+            )
+        return {"kind": "git-revision", "value": revision}
+
+    encoded_identity = document.get("focacciaSourceIdentity")
+    if not isinstance(encoded_identity, dict):
+        raise ReproducerEvaluationError(
+            "Reproducer config has invalid Focaccia source identity."
+        )
+    kind = _required_string(encoded_identity, "kind", "Focaccia source identity")
+    value = _required_string(encoded_identity, "value", "Focaccia source identity")
+    if kind == "git-revision":
+        if len(value) != 40 or any(character not in HEX_DIGITS for character in value):
+            raise ReproducerEvaluationError(
+                "Reproducer config has an invalid Focaccia revision identity."
+            )
+    elif kind == "nix-store-path":
+        if not value.startswith("/nix/store/") or Path(value).name in {"", ".", ".."}:
+            raise ReproducerEvaluationError(
+                "Reproducer config has an invalid Focaccia store-path identity."
+            )
+    else:
+        raise ReproducerEvaluationError(
+            f"Reproducer config has unsupported Focaccia identity kind {kind!r}."
+        )
+    return {"kind": kind, "value": value}
+
+
 def load_config(path: Path) -> Config:
     document = common._load_json_object(path, "reproducer evaluation config")
-    if document.get("schema") != CONFIG_SCHEMA:
+    schema = document.get("schema")
+    if schema not in CONFIG_SCHEMAS:
         raise ReproducerEvaluationError(
             "Unsupported reproducer evaluation config schema."
         )
@@ -135,13 +179,7 @@ def load_config(path: Path) -> Config:
         raise ReproducerEvaluationError(
             f"Reproducer evaluation is supported only on {EXPECTED_SYSTEM}, not {system}."
         )
-    revision = _required_string(document, "focacciaRevision", "Reproducer config")
-    if len(revision) != 40 or any(
-        character not in HEX_DIGITS for character in revision
-    ):
-        raise ReproducerEvaluationError(
-            "Reproducer config has an invalid Focaccia revision."
-        )
+    source_identity = _parse_source_identity(document, schema)
 
     encoded_cases = document.get("cases")
     if not isinstance(encoded_cases, dict) or not encoded_cases:
@@ -156,6 +194,7 @@ def load_config(path: Path) -> Config:
         source_symbol = encoded.get("sourceSymbol")
         entry_prefix_symbol = encoded.get("entryPrefixSymbol")
         condition_code_seed = encoded.get("conditionCodeSeed")
+        required_registers = encoded.get("requiredRegisters", [])
         reference_kind = encoded.get("referenceKind", "qemu")
         if reference_kind not in {"qemu", "native-oracle"}:
             raise ReproducerEvaluationError(f"{context} has invalid referenceKind.")
@@ -176,6 +215,12 @@ def load_config(path: Path) -> Config:
             raise ReproducerEvaluationError(f"{context} has invalid sourceSymbol.")
         if entry_prefix_symbol is not None and not isinstance(entry_prefix_symbol, str):
             raise ReproducerEvaluationError(f"{context} has invalid entryPrefixSymbol.")
+        if (
+            not isinstance(required_registers, list)
+            or any(not isinstance(register, str) or not register for register in required_registers)
+            or len(set(required_registers)) != len(required_registers)
+        ):
+            raise ReproducerEvaluationError(f"{context} has invalid requiredRegisters.")
         if condition_code_seed is not None and (
             not isinstance(condition_code_seed, int)
             or isinstance(condition_code_seed, bool)
@@ -202,21 +247,38 @@ def load_config(path: Path) -> Config:
                 ),
                 source_symbol=source_symbol,
                 entry_prefix_symbol=entry_prefix_symbol,
+                required_registers=tuple(required_registers),
                 condition_code_seed=condition_code_seed,
             )
         )
 
-    expected_cases = {"1370", "1371", "1372", "1374", "1376", "1377", "2175", "sqlite"}
+    expected_cases = {
+        "508",
+        "1370",
+        "1371",
+        "1372",
+        "1374",
+        "1375",
+        "1376",
+        "1377",
+        "1828867",
+        "1832422",
+        "1861404",
+        "2175",
+        "2495",
+        "sqlite",
+    }
     actual_cases = {case.identifier for case in cases}
     if actual_cases != expected_cases:
         raise ReproducerEvaluationError(
-            "Reproducer config must contain exactly the Figure 8 cases: "
+            "Reproducer config must contain exactly the supported x86-64 Table 2 "
+            "and SQLite cases: "
             f"expected {sorted(expected_cases)}, got {sorted(actual_cases)}."
         )
 
     return Config(
         system=system,
-        focaccia_revision=revision,
+        focaccia_source_identity=source_identity,
         compiler=_required_path(document, "compilerProgram", "Reproducer config"),
         nm=_required_path(document, "nmProgram", "Reproducer config"),
         validate_qemu=_required_path(
@@ -309,6 +371,92 @@ def load_source_artifacts(input_root: Path, case: CaseConfig) -> SourceArtifacts
         report=paths["report"],
         trace_format=trace_format,
         metadata=item,
+    )
+
+
+DIAGNOSTIC_ADAPTER_SCHEMA = "focaccia-reproducer-diagnostic-source-adapter-v1"
+DIAGNOSTIC_NOT_CLAIMS = [
+    "source-case-passed", "all-transitions-validated", "reference-correctness-established"
+]
+
+
+def require_exact_vector_mismatch(report: dict[str, Any], target: dict[str, Any]) -> int:
+    """Require the retained 32-byte target, not merely any memory mismatch.
+
+    The v1 report has no structured byte payload; match its complete diagnostic
+    suffix, alongside the structured code/severity, until that schema gains one.
+    """
+    expected = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    actual = "000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
+    if target != {"code": "memory-content-mismatch", "widthBytes": 32,
+                  "expected": expected, "actual": actual}:
+        raise ReproducerEvaluationError("Invalid exact 32-byte diagnostic target.")
+    validation = report.get("validation")
+    entries = validation.get("entries") if isinstance(validation, dict) else None
+    if not isinstance(entries, list) or any(
+        not isinstance(entry, dict) or not isinstance(entry.get("errors"), list)
+        or any(not isinstance(error, dict) for error in entry["errors"])
+        for entry in entries
+    ):
+        raise ReproducerEvaluationError("Malformed diagnostic validation entries.")
+    matches = [entry for entry in entries for error in entry["errors"]
+               if error.get("code") == target["code"]
+               and error.get("severity") == "confirmed"
+               and isinstance(error.get("message"), str)
+               and error["message"].endswith(f"Expected {expected}, actual {actual}.")]
+    if report.get("status") != "mismatch" or len(matches) != 1:
+        raise ReproducerEvaluationError("Missing unique exact 32-byte diagnostic mismatch.")
+    pc = matches[0].get("pc")
+    if not isinstance(pc, int) or isinstance(pc, bool):
+        raise ReproducerEvaluationError("Diagnostic target lacks a concrete source PC.")
+    return pc
+
+
+def load_diagnostic_source_adapter(
+    adapter: Path, artifact_root: Path, case: CaseConfig
+) -> SourceArtifacts:
+    document = common._load_json_object(adapter, "diagnostic source adapter")
+    if (document.get("schema") != DIAGNOSTIC_ADAPTER_SCHEMA
+        or case.identifier != "1861404"
+        or document.get("case") != case.source_case
+        or document.get("admission") != "diagnostic-target-only"
+        or document.get("notClaims") != DIAGNOSTIC_NOT_CLAIMS):
+        raise ReproducerEvaluationError("Invalid diagnostic target-only admission.")
+    root = artifact_root.resolve(strict=True)
+    paths = {}
+    for name, section, key, hash_key in (
+        ("binary", "binary", "path", "sha256"),
+        ("oracle", "oracle", "path", "sha256"),
+        ("oracleProfile", "oracle", "profile", "profileSha256"),
+        ("report", "consumer", "report", "reportSha256"),
+        ("states", "consumer", "states", "statesSha256"),
+        ("consumerProfile", "consumer", "profile", "profileSha256"),
+    ):
+        encoded = document.get(section)
+        if not isinstance(encoded, dict):
+            raise ReproducerEvaluationError(f"Invalid adapter {section}.")
+        path = _require_contained_file(
+            root / _required_string(encoded, key, section), root, name
+        )
+        if common._sha256(path) != _required_string(encoded, hash_key, section):
+            raise ReproducerEvaluationError(f"Diagnostic adapter {name} hash mismatch.")
+        paths[name] = path
+    consumer = document["consumer"]
+    if (consumer.get("status") != "mismatch"
+        or consumer.get("executionCompleted") is not True
+        or consumer.get("allTransitionsValidated") is not False):
+        raise ReproducerEvaluationError("Invalid diagnostic consumer scope.")
+    report = common._load_json_object(paths["report"], "diagnostic source report")
+    if report.get("schema") != QEMU_REPORT_SCHEMA:
+        raise ReproducerEvaluationError("Unsupported diagnostic report schema.")
+    if (report.get("completion", {}).get("execution_complete") is not True
+        or report.get("trace", {}).get("complete") is not False):
+        raise ReproducerEvaluationError("Diagnostic scope contradicts the hash-bound consumer report.")
+    require_exact_vector_mismatch(report, consumer.get("confirmedTarget"))
+    return SourceArtifacts(
+        binary=paths["binary"], oracle=paths["oracle"], states=paths["states"],
+        report=paths["report"], trace_format="msgpack",
+        metadata={"diagnosticAdapter": document, "adapterSha256": common._sha256(adapter)},
     )
 
 
@@ -449,6 +597,10 @@ def _decode_indexed_msgpack_transforms(
     sliced_header = dict(header)
     sliced_header["addresses"] = [source]
     sliced_header["item_count"] = 1
+    # This is an extraction-only trace, not the complete source trace. Retaining
+    # whole-program completion would bind its original cardinality to one item.
+    sliced_header["scope"] = "unspecified"
+    sliced_header["completion"] = None
     encoded_header = msgpack.packb(sliced_header, use_bin_type=True)
     matches: list[SymbolicTransform] = []
     for payload in selected_payloads:
@@ -487,6 +639,29 @@ def _load_transform(
             f"{contract.source:#x}->{contract.destination:#x}."
         )
     return matches[0]
+
+
+def _load_diagnostic_transform(path: Path, contract: MismatchContract) -> SymbolicTransform:
+    """Compose every native instruction in the diagnostic adaptive cutpoint.
+
+    Admission is deliberately limited to a unique, forward, bounded linear path;
+    repeated source PCs, gaps, backward branches and overshoots fail closed.
+    """
+    address = contract.source
+    composed = None
+    for _ in range(64):
+        candidates = _decode_indexed_msgpack_transforms(path, address)
+        if len(candidates) != 1:
+            raise ReproducerEvaluationError("Diagnostic fragment has ambiguous or missing native transforms.")
+        item = candidates[0]
+        start, end = item.range
+        if start != address or not address < end <= contract.destination:
+            raise ReproducerEvaluationError("Diagnostic fragment is not a forward contiguous native path.")
+        composed = item if composed is None else composed.composed_with(item)
+        if end == contract.destination:
+            return composed
+        address = end
+    raise ReproducerEvaluationError("Diagnostic fragment exceeds the composition bound.")
 
 
 def _load_snapshot(path: Path, source: int) -> ProgramState:
@@ -675,6 +850,7 @@ def require_reference_acceptance(report: dict[str, Any]) -> None:
 def require_native_oracle_acceptance(
     artifacts: SourceArtifacts,
     entry_prefix: EntryPrefix | None,
+    required_registers: tuple[str, ...],
 ) -> None:
     native = artifacts.metadata.get("native")
     if (
@@ -685,9 +861,9 @@ def require_native_oracle_acceptance(
         raise ReproducerEvaluationError(
             "Native acceptance control lacks a successful zero-status trigger capture."
         )
-    if entry_prefix is None:
+    if entry_prefix is None and not required_registers:
         raise ReproducerEvaluationError(
-            "Native acceptance control requires the exact entry-to-transition prefix."
+            "Native acceptance control requires explicit restored transition context."
         )
 
 
@@ -710,18 +886,33 @@ def evaluate_case(
     case: CaseConfig,
     input_root: Path,
     output_root: Path,
+    *,
+    diagnostic_adapter: Path | None = None,
+    artifact_root: Path | None = None,
 ) -> dict[str, Any]:
-    artifacts = load_source_artifacts(input_root, case)
+    if diagnostic_adapter is not None:
+        if artifact_root is None or case.reference_kind != "qemu":
+            raise ReproducerEvaluationError("Diagnostic admission requires artifact root and actual QEMU reference.")
+        artifacts = load_diagnostic_source_adapter(diagnostic_adapter, artifact_root, case)
+    else:
+        artifacts = load_source_artifacts(input_root, case)
     source_report = common._load_json_object(
         artifacts.report, "source validation report"
     )
-    expected_source = _resolve_source_symbol(config, case, artifacts.binary)
+    expected_source = (
+        require_exact_vector_mismatch(
+            source_report, artifacts.metadata["diagnosticAdapter"]["consumer"]["confirmedTarget"]
+        ) if diagnostic_adapter else _resolve_source_symbol(config, case, artifacts.binary)
+    )
     contract = select_mismatch_contract(
         source_report,
         case.primary_error,
         source_address=expected_source,
     )
-    transform = _load_transform(artifacts.oracle, artifacts.trace_format, contract)
+    transform = (
+        _load_diagnostic_transform(artifacts.oracle, contract)
+        if diagnostic_adapter else _load_transform(artifacts.oracle, artifacts.trace_format, contract)
+    )
     snapshot = _load_snapshot(artifacts.states, contract.source)
     fragment = extract_executable_fragment(
         artifacts.binary, contract.source, contract.destination
@@ -729,6 +920,8 @@ def evaluate_case(
 
     case_root = output_root / "artifacts" / case.identifier
     case_root.mkdir(parents=True)
+    if diagnostic_adapter is not None:
+        _write_json(case_root / "diagnostic-source-admission.json", artifacts.metadata)
     guest = case_root / "guest-program"
     source = case_root / "reproducer.S"
     binary = case_root / "reproducer"
@@ -759,6 +952,7 @@ def evaluate_case(
         transform,
         fragment=fragment,
         entry_prefix=entry_prefix,
+        required_registers=case.required_registers,
         condition_code_seed=case.condition_code_seed,
     )
     source.write_text(reproducer.asm())
@@ -804,7 +998,16 @@ def evaluate_case(
         oracle,
         validation_root / "buggy",
     )
-    require_buggy_reproduction(buggy_report, contract)
+    if diagnostic_adapter is None:
+        require_buggy_reproduction(buggy_report, contract)
+    else:
+        require_exact_vector_mismatch(
+            buggy_report, artifacts.metadata["diagnosticAdapter"]["consumer"]["confirmedTarget"]
+        )
+        reproduced = select_mismatch_contract(buggy_report, case.primary_error, source_address=contract.source)
+        trace = buggy_report.get("trace", {})
+        if reproduced != contract or (trace.get("state_count"), trace.get("transform_count")) != (2, 1) or trace.get("terminal_reached") is not True:
+            raise ReproducerEvaluationError("Diagnostic reproduction did not preserve the complete target boundary pair.")
     if case.reference_kind == "qemu":
         if case.reference_program is None:
             raise ReproducerEvaluationError("QEMU reference program is unavailable.")
@@ -831,7 +1034,9 @@ def evaluate_case(
             "status": "accepted",
         }
     else:
-        require_native_oracle_acceptance(artifacts, entry_prefix)
+        require_native_oracle_acceptance(
+            artifacts, entry_prefix, case.required_registers
+        )
         reference_document = {
             "kind": "native-oracle",
             "emulator": case.reference_emulator,
@@ -868,7 +1073,10 @@ def evaluate_case(
         ),
     }
     return {
-        "status": "passed",
+        "status": "diagnostic-target-reproduced" if diagnostic_adapter else "passed",
+        "admission": "diagnostic-target-only" if diagnostic_adapter else "passed-source",
+        "notClaims": DIAGNOSTIC_NOT_CLAIMS if diagnostic_adapter else [],
+        "diagnosticSource": artifacts.metadata if diagnostic_adapter else None,
         "contract": _contract_document(contract),
         "source": source_document,
         "generated": generated_document,
@@ -945,7 +1153,7 @@ def run(
         "schema": METADATA_SCHEMA,
         "system": config.system,
         "guestSystem": GUEST_SYSTEM,
-        "focacciaRevision": config.focaccia_revision,
+        "focacciaSourceIdentity": config.focaccia_source_identity,
         "requestedIterations": iterations,
         "sourceIteration": 0,
         "selectedCases": [case.identifier for case in selected_cases],
@@ -963,6 +1171,10 @@ def run(
             )
         except (
             ReproducerEvaluationError,
+            ReproducerBasicBlockError,
+            ReproducerFragmentError,
+            ReproducerMemoryError,
+            ReproducerRegisterError,
             common.EvaluationError,
             OSError,
             ValueError,
@@ -980,7 +1192,7 @@ def run(
 
     evidence = {
         "schema": SIZE_EVIDENCE_SCHEMA,
-        "focacciaRevision": config.focaccia_revision,
+        "focacciaSourceIdentity": config.focaccia_source_identity,
         "cases": {case: _size_case(case, output_root) for case in passed_cases},
     }
     _write_json(output_root / "reproducer-sizes.json", evidence)
@@ -994,6 +1206,74 @@ def run(
     return 0 if all_passed else 1
 
 
+def aarch64_preflight(input_root: Path) -> dict[str, Any]:
+    """Reject unsupported generation without inventing native entry context.
+
+    Current retained validation reports are mismatch evidence, not the complete
+    block-entry contract required by generate_aarch64_reproducer. In particular,
+    their consumer states must not be substituted for a native entry snapshot.
+    """
+    root = input_root.resolve(strict=True)
+    metadata_path = _require_contained_file(
+        root / "emulated/qemu/aarch64-linux/metadata.json", root, "source metadata"
+    )
+    metadata = common._load_json_object(metadata_path, "QEMU evaluator metadata")
+    if metadata.get("schema") != SOURCE_METADATA_SCHEMA:
+        raise ReproducerEvaluationError("Unsupported source metadata schema.")
+    encoded_cases = metadata.get("cases", {})
+    if not isinstance(encoded_cases, dict):
+        raise ReproducerEvaluationError("Source cases must be an object.")
+    cases = {}
+    for identifier in ("364", "2248", "2419"):
+        encoded = encoded_cases.get(f"qemu-{identifier}", {})
+        iterations = encoded.get("iterations", []) if isinstance(encoded, dict) else []
+        item = (
+            iterations[0]
+            if isinstance(iterations, list) and iterations and isinstance(iterations[0], dict)
+            else {}
+        )
+        evidence: dict[str, Any] = {
+            "status": "blocked",
+            "generationAttempted": False,
+            "controlsAttempted": False,
+            "sourceStatus": encoded.get("status") if isinstance(encoded, dict) else None,
+            "sourceError": item.get("error"),
+            "missingSourceArtifacts": [
+                name for name in ("binary", "oracle", "states", "report")
+                if not isinstance(item.get(name), str)
+            ],
+            "missingEntryContract": [
+                "native block-entry snapshot with provenance",
+                "complete retained block bounds and exact bytes",
+                "complete required register bits and memory ranges at block entry",
+            ],
+            "artifacts": {},
+        }
+        for name in ("binary", "oracle", "states", "report"):
+            if isinstance(item.get(name), str):
+                path = _require_contained_file(Path(item[name]), root, name)
+                digest = common._sha256(path)
+                expected = item.get(f"{name}Sha256")
+                if expected is not None and digest != expected:
+                    raise ReproducerEvaluationError(f"Source {name} hash mismatch for {identifier}.")
+                evidence["artifacts"][name] = {
+                    "path": str(path), "sha256": digest,
+                    "sourceHashBound": expected is not None,
+                }
+                if name == "report":
+                    report = common._load_json_object(path, "source report")
+                    evidence["reportFields"] = sorted(report)
+        cases[identifier] = evidence
+    return {
+        "schema": "focaccia-aarch64-reproducer-preflight-v1",
+        "status": "blocked",
+        "metadata": str(metadata_path),
+        "metadataSha256": common._sha256(metadata_path),
+        "reason": "Retained mismatch artifacts do not establish the exact native block-entry contract; generation is unsupported.",
+        "cases": cases,
+    }
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1002,6 +1282,16 @@ def make_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--config", type=Path, required=True, help=argparse.SUPPRESS)
+    parser.add_argument("--diagnostic-source-adapter", type=Path,
+                        help="Opt-in target-only source admission; never emits paper size evidence.")
+    parser.add_argument("--artifact-root", type=Path,
+                        help="Containment root for diagnostic adapter artifacts.")
+    parser.add_argument("--diagnostic-output", type=Path,
+                        help="New output directory for diagnostic controls and metadata.")
+    parser.add_argument(
+        "--aarch64-preflight", action="store_true",
+        help="Report blocked AArch64 entry-context admission as JSON; never generate or execute.",
+    )
     parser.add_argument(
         "--input", type=Path, required=True, help="Shared evaluation run root."
     )
@@ -1023,6 +1313,35 @@ def make_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = make_parser().parse_args(argv)
     try:
+        if args.aarch64_preflight:
+            print(json.dumps(aarch64_preflight(args.input), indent=2, sort_keys=True))
+            return 1
+        if args.diagnostic_source_adapter is not None:
+            if args.case != ["1861404"] or args.artifact_root is None or args.diagnostic_output is None:
+                raise ReproducerEvaluationError("Diagnostic admission requires --case 1861404, --artifact-root and --diagnostic-output.")
+            if common.normalize_machine(platform.machine()) != "aarch64":
+                raise ReproducerEvaluationError("Diagnostic controls require the configured AArch64 emulator host.")
+            config = load_config(args.config)
+            case = next(case for case in config.cases if case.identifier == "1861404")
+            output = args.diagnostic_output.resolve()
+            output.mkdir(parents=True, exist_ok=False)
+            try:
+                result = evaluate_case(config, case, args.input, output,
+                    diagnostic_adapter=args.diagnostic_source_adapter,
+                    artifact_root=args.artifact_root)
+            except (ReproducerEvaluationError, ReproducerBasicBlockError,
+                    ReproducerFragmentError, ReproducerMemoryError,
+                    ReproducerRegisterError, common.EvaluationError, OSError, ValueError) as error:
+                _write_json(output / "diagnostic-result.json", {
+                    "schema": "focaccia-reproducer-diagnostic-result-v1",
+                    "status": "failed", "error": str(error),
+                    "admission": "diagnostic-target-only", "notClaims": DIAGNOSTIC_NOT_CLAIMS,
+                })
+                raise
+            _write_json(output / "diagnostic-result.json", result)
+            return 0
+        if args.artifact_root is not None or args.diagnostic_output is not None:
+            raise ReproducerEvaluationError("Diagnostic options require --diagnostic-source-adapter.")
         return run(
             load_config(args.config),
             args.input,

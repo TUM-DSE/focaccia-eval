@@ -1,0 +1,29 @@
+{
+  "schema": "focaccia-qemu-validation-v1",
+  "status": "mismatch",
+  "trace": {
+    "available": true,
+    "complete": true,
+    "terminal_reached": true,
+    "state_count": 2,
+    "transform_count": 1
+  },
+  "replay": {
+    "active": true,
+    "record_count": 1,
+    "by_outcome": {"handled": 1}
+  },
+  "validation": {
+    "diagnostics": [],
+    "diagnostic_counts": {},
+    "severity_counts": {"confirmed": 1},
+    "entries": [{
+      "transition_range": [4096, 4100],
+      "errors": [{
+        "severity": "confirmed",
+        "code": "register-content-mismatch",
+        "subject": "R8"
+      }]
+    }]
+  }
+}

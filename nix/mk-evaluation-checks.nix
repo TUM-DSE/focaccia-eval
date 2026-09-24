@@ -10,12 +10,39 @@
   nativeFullCurlEvaluationConfig,
   qemuFullCurlEvaluationConfig,
   qemuCaseEvaluationData,
-  qemuEvaluationConfig,
+  triggerPackages,
+  qemuEvaluationData,
   applicationOutputs,
   mkEmulatorEvaluationRunner,
 }:
 
 let
+  # Fixture-only checks: producer/debugger/RR processes are fake test programs.
+  mkIdentityFixtureCheck = name: tests:
+    pkgs.runCommand name { nativeBuildInputs = [ pkgs.python3 pkgs.ruff ]; } ''
+      mkdir evaluation
+      cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+      cp ${../evaluation/test_evaluation.py} evaluation/test_evaluation.py
+      cd evaluation
+      ruff check evaluation.py test_evaluation.py
+      ruff format --check evaluation.py test_evaluation.py
+      python -m unittest -v ${lib.concatMapStringsSep " " (test: "test_evaluation.EvaluationTests.${test}") tests}
+      touch "$out"
+    '';
+  nativeOracleIdentityCheck = mkIdentityFixtureCheck "native-oracle-identity" [
+    "test_native_oracle_identity_requires_explicit_producer_fields"
+    "test_native_oracle_paths_reject_escape_and_allow_bundle_symlink"
+    "test_qemu_emulated_role_launches_gdb_driver_and_checks_report"
+  ];
+  applicationOracleProducerHashCheck = mkIdentityFixtureCheck "application-oracle-producer-hash" [
+    "test_application_oracle_requires_producer_hash"
+    "test_native_selective_application_records_rr_and_uses_main_bound"
+    "test_qemu_application_role_replays_bound_native_artifacts"
+  ];
+  pluginReferenceAcceptanceCheck = mkIdentityFixtureCheck "plugin-reference-acceptance" [
+    "test_plugin_reference_acceptance_needs_no_mismatch_contract"
+    "test_qemu_plugin_role_requires_complete_localized_mismatch"
+  ];
   codeNamingPolicyCheck =
     pkgs.runCommand "code-naming-policy"
       {
@@ -88,6 +115,62 @@ let
         )
         touch "$out"
       '';
+  wholeProgramAcceptanceCheck = (mkIdentityFixtureCheck "whole-program-without-witness-stop-pc" [
+    "test_whole_program_completion_without_witness_stop_pc"
+    "test_full_application_requires_completion_before_timings"
+    "test_reference_acceptance_requires_complete_terminal_trace"
+  ]).overrideAttrs (old: {
+    buildCommand = old.buildCommand + ''
+      # Reintroduce the live regression in the disposable build copy only.
+      chmod u+w evaluation.py
+      python - <<'PY'
+      from pathlib import Path
+      path = Path("evaluation.py")
+      source = path.read_text()
+      original = "# use experiment execution evidence to turn semantic gaps into completion.\n    _require_complete_trace(report)"
+      mutant = "# use experiment execution evidence to turn semantic gaps into completion.\n    _require_complete_terminal_trace(report)"
+      assert source.count(original) == 1
+      path.write_text(source.replace(original, mutant))
+      PY
+      if python -B -m unittest -v test_evaluation.EvaluationTests.test_whole_program_completion_without_witness_stop_pc; then
+        echo 'Whole-program stop-PC regression survived' >&2
+        exit 1
+      fi
+    '';
+  });
+  unannotatedTriggerFixture = import ./mk-trigger.nix {
+    inherit pkgs;
+    trigger = {
+      id = "unannotated-fixture";
+      guestIsa = if system == "aarch64-linux" then "aarch64" else "x86_64";
+      source = pkgs.writeTextDir "main.c" ''
+        int main(void) { volatile unsigned value = 7; return value != 7; }
+      '';
+      sources = [ "main.c" ];
+      cflags = [ ];
+      freestanding = false;
+      instruction = "unannotated ordinary C program";
+    };
+  };
+  markerFreeTriggerWholeProgramCheck = assert qemuEvaluationData.triggerTraceMode == "whole-program";
+    (mkIdentityFixtureCheck "marker-free-trigger-whole-program" [
+    "test_marker_free_trigger_capture_uses_whole_program"
+    "test_marker_free_trigger_consumer_rejects_truncated_and_legacy"
+  ]).overrideAttrs (old: {
+    buildCommand = ''
+      ${pkgs.binutils}/bin/nm ${unannotatedTriggerFixture}/bin/reproducer-unannotated-fixture > symbols
+      if ${pkgs.gnugrep}/bin/grep -E 'focaccia_trace_(start|stop)' symbols; then
+        echo 'Unannotated fixture unexpectedly has witness markers' >&2
+        exit 1
+      fi
+    '' + old.buildCommand;
+  });
+  fullApplicationCompletionCheck = mkIdentityFixtureCheck "full-application-completion" [
+    "test_full_application_requires_completion_before_timings"
+    "test_full_curl_records_cross_validated_and_speculative_profiles"
+    "test_native_selective_application_records_rr_and_uses_main_bound"
+    "test_qemu_application_role_replays_bound_native_artifacts"
+  ];
   evaluationFullCurlModesCheck =
     pkgs.runCommand "full-curl-measurement-modes"
       {
@@ -390,7 +473,7 @@ let
         (
           cd evaluation
           python -m unittest -v \
-            test_evaluation.EvaluationTests.test_box64_emulated_role_consumes_native_oracle_and_structured_report \
+            test_evaluation.EvaluationTests.test_box64_whole_program_binds_process_completion_and_structured_report \
             test_evaluation.EvaluationTests.test_qemu_emulated_role_launches_gdb_driver_and_checks_report
         )
         touch "$out"
@@ -487,6 +570,43 @@ let
         )
         touch "$out"
       '';
+  triggerMismatchContracts = lib.mapAttrs (_: data: builtins.head (builtins.attrValues data.emulatorCases)) (
+    lib.filterAttrs (_: data: (builtins.head (builtins.attrValues data.emulatorCases)) ? expectedMismatchCode) qemuCaseEvaluationData
+  );
+  exactTriggerMismatchLocalizationCheck =
+    pkgs.runCommand "exact-trigger-mismatch-localization"
+      { nativeBuildInputs = [ pkgs.python3 pkgs.ruff ]; }
+      ''
+        mkdir evaluation
+        cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+        cp ${../evaluation/test_evaluation.py} evaluation/test_evaluation.py
+        cd evaluation
+        ruff check evaluation.py test_evaluation.py
+        ruff format --check evaluation.py test_evaluation.py
+        python -m unittest -v \
+          test_evaluation.EvaluationTests.test_trigger_mismatch_contract_rejects_missing_and_invalid_fields \
+          test_evaluation.EvaluationTests.test_trigger_mismatch_rejects_address_overflow_before_qemu \
+          test_evaluation.EvaluationTests.test_trigger_mismatch_requires_exact_localization_before_timings \
+          test_evaluation.EvaluationTests.test_trigger_memory_mismatch_requires_structured_address \
+          test_evaluation.EvaluationTests.test_trigger_reference_requires_terminal_completion_before_timings \
+          test_evaluation.EvaluationTests.test_qemu_emulated_role_launches_gdb_driver_and_checks_report
+        touch "$out"
+      '';
+  triggerMismatchWitnessBoundariesCheck =
+    let
+      witnesses = lib.mapAttrs (_: case:
+        let
+          cross = if case.guestSystem == "x86_64-linux" then pkgs.pkgsCross.musl64 else pkgs.pkgsCross.aarch64-multiplatform-musl;
+        in case // {
+          binary = "${triggerPackages.${case.trigger}}/bin/reproducer-${case.trigger}";
+          objdump = "${cross.stdenv.cc.bintools}/bin/${cross.stdenv.cc.targetPrefix}objdump";
+        }
+      ) triggerMismatchContracts;
+      config = pkgs.writeText "trigger-mismatch-witnesses.json" (builtins.toJSON witnesses);
+    in pkgs.runCommand "trigger-mismatch-witness-boundaries" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      python ${../evaluation/check_trigger_boundaries.py} ${config}
+      touch "$out"
+    '';
   exactApplicationMismatchLocalizationCheck =
     pkgs.runCommand "exact-application-mismatch-localization"
       {
@@ -530,6 +650,34 @@ let
         )
         touch "$out"
       '';
+  # Shape-only checks must not realize the emulator paths encoded in this JSON.
+  # Production runners retain the original, context-bearing configuration.
+  qemuCheckConfigurationJSON = builtins.unsafeDiscardStringContext (
+    builtins.toJSON qemuEvaluationData
+  );
+  qemuCheckConfiguration =
+    assert !builtins.hasContext qemuCheckConfigurationJSON;
+    pkgs.writeText "qemu-check-configuration.json" qemuCheckConfigurationJSON;
+  qemuCheckConfigurationIsolationCheck =
+    assert !builtins.hasContext qemuCheckConfigurationJSON;
+    pkgs.runCommand "qemu-check-configuration-isolation" { nativeBuildInputs = [ pkgs.jq ]; } ''
+      jq -e '
+        type == "object" and
+        (.emulatorCases | type == "object") and
+        (.emulators | type == "object")
+      ' ${qemuCheckConfiguration} > /dev/null
+      ${lib.optionalString (system == "aarch64-linux") ''
+        jq -e '
+          ([.emulatorCases[] | select(.kind == "application")] | length) == 3 and
+          ([.emulatorCases[] | select(.kind == "application") | .trigger] | unique | sort) == ["curl", "lua", "sqlite"] and
+          ([.emulatorCases[] | select(.kind == "application" and .expectedValidation == "mismatch")] | length) == 3 and
+          ([.emulatorCases[] | select(.expectedValidation == "accepted")] | length) == 0 and
+          ([.emulatorCases | keys[] | select(endswith("-reference"))] | length) == 0 and
+          ([.emulators | keys[] | select(endswith("-reference"))] | length) == 0
+        ' ${qemuCheckConfiguration} > /dev/null
+      ''}
+      touch "$out"
+    '';
   qemuApplicationReplayCheck =
     pkgs.runCommand "qemu-application-deterministic-replay"
       {
@@ -560,16 +708,7 @@ let
         )
         grep -F -- '--deterministic-log' "$TMPDIR/manifest-help.txt"
         grep -F -- '--deterministic-log' "$TMPDIR/preflight-help.txt"
-        ${lib.optionalString (system == "aarch64-linux") ''
-          jq -e '
-            ([.emulatorCases[] | select(.kind == "application")] | length) == 3 and
-            ([.emulatorCases[] | select(.kind == "application") | .trigger] | unique | sort) == ["curl", "lua", "sqlite"] and
-            ([.emulatorCases[] | select(.kind == "application" and .expectedValidation == "mismatch")] | length) == 3 and
-            ([.emulatorCases[] | select(.expectedValidation == "accepted")] | length) == 0 and
-            ([.emulatorCases | keys[] | select(endswith("-reference"))] | length) == 0 and
-            ([.emulators | keys[] | select(endswith("-reference"))] | length) == 0
-          ' ${qemuEvaluationConfig} > /dev/null
-        ''}
+        test -e ${qemuCheckConfigurationIsolationCheck}
         touch "$out"
       '';
   luaSignalReadinessCheck = lib.optionalAttrs (system == "x86_64-linux") {
@@ -618,7 +757,7 @@ let
     '';
   };
   evaluationQemuPluginDriverCheck =
-    pkgs.runCommand "qemu-plugin-structured-localization"
+    pkgs.runCommand "qemu-plugin-terminal-evidence-handshake"
       {
         nativeBuildInputs = [
           pkgs.python3
@@ -652,6 +791,25 @@ let
         )
         touch "$out"
       '';
+  box64WholeProgramCompletionCheck =
+    pkgs.runCommand "box64-whole-program-completion"
+      {
+        nativeBuildInputs = [ pkgs.python3 focaccia.packages.${system}.focaccia ];
+      }
+      ''
+        mkdir evaluation
+        cp ${../evaluation/offline_validation.py} evaluation/offline_validation.py
+        cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+        cp ${../evaluation/test_offline_validation.py} evaluation/test_offline_validation.py
+        cp ${../evaluation/test_evaluation.py} evaluation/test_evaluation.py
+        (
+          cd evaluation
+          python -m unittest -v \
+            test_offline_validation.OfflineValidationTests.test_box64_log_is_validated_with_oracle_guest_architecture \
+            test_evaluation.EvaluationTests.test_box64_whole_program_binds_process_completion_and_structured_report
+        )
+        touch "$out"
+      '';
   evaluationBox64DriverCheck =
     pkgs.runCommand "evaluation-box64-driver"
       {
@@ -664,7 +822,7 @@ let
         (
           cd evaluation
           python -m unittest -v \
-            test_evaluation.EvaluationTests.test_box64_emulated_role_consumes_native_oracle_and_structured_report
+            test_evaluation.EvaluationTests.test_box64_whole_program_binds_process_completion_and_structured_report
         )
         touch "$out"
       '';
@@ -672,9 +830,16 @@ in
 {
   inherit
     codeNamingPolicyCheck
+    nativeOracleIdentityCheck
+    applicationOracleProducerHashCheck
+    pluginReferenceAcceptanceCheck
     evaluationNativeCheck
     incrementalEvaluationCompositionCheck
     evaluationFullCurlModesCheck
+    fullApplicationCompletionCheck
+    wholeProgramAcceptanceCheck
+    markerFreeTriggerWholeProgramCheck
+    unannotatedTriggerFixture
     emulatorEvaluationDispatchCheck
     reproducerEffectivenessEvaluationCheck
     evaluationCaptureTimeoutCheck
@@ -690,11 +855,15 @@ in
     terminalValidationCutpointCheck
     unmatchedTransformSkippingCheck
     exactApplicationMismatchLocalizationCheck
+    exactTriggerMismatchLocalizationCheck
+    triggerMismatchWitnessBoundariesCheck
     referenceTerminalAcceptanceCheck
     qemuApplicationReplayCheck
+    qemuCheckConfigurationIsolationCheck
     luaSignalReadinessCheck
     evaluationQemuPluginDriverCheck
     nativeWitnessIdentityCheck
     evaluationBox64DriverCheck
+    box64WholeProgramCompletionCheck
     ;
 }

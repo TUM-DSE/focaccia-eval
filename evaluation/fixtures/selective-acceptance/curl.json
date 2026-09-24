@@ -1,0 +1,50 @@
+{
+  "schema": "focaccia-qemu-validation-v1",
+  "status": "mismatch",
+  "trace": {
+    "available": true,
+    "complete": true,
+    "expected_terminal_pc": 4447649,
+    "state_count": 328043,
+    "terminal_pc": 4447649,
+    "terminal_reached": true,
+    "transform_count": 328042
+  },
+  "replay": {
+    "active": true,
+    "by_outcome": {
+      "handled": 101
+    },
+    "by_strategy": {
+      "execute-and-reconcile": 11,
+      "recorded-replay": 90
+    },
+    "record_count": 101
+  },
+  "validation": {
+    "diagnostic_counts": {},
+    "diagnostics": [],
+    "entries": [
+      {
+        "errors": [
+          {
+            "code": "register-content-mismatch",
+            "message": "Content of register CF is false. Expected 0x1, actual 0x0.",
+            "severity": "confirmed",
+            "severity_label": "ERROR",
+            "subject": "CF"
+          }
+        ],
+        "pc": 4447644,
+        "transition_range": [
+          4447644,
+          4447649
+        ]
+      }
+    ],
+    "entry_count": 328042,
+    "severity_counts": {
+      "confirmed": 1
+    }
+  }
+}

@@ -4,6 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/3e3afe5174c561dee0df6f2c2b2236990146329f";
 
+    nix2container = {
+      # Keep the Skopeo transport compatible with the pinned nixpkgs.
+      url = "github:nlewo/nix2container/1271f0b785a74d44a01a81d32eece568e0a1296d";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     focaccia = {
       url = "git+https://github.com/TUM-DSE/focaccia.git?ref=refs/heads/main";
       inputs.nixpkgs.follows = "nixpkgs";
