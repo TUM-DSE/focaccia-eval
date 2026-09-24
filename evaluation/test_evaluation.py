@@ -1337,6 +1337,129 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("Timed out after 3600 seconds", result.output)
         self.assertEqual(run.call_args.kwargs["timeout"], 3600)
 
+    def test_native_trigger_gdbserver_transport(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            binary = self._write_executable(root / "trigger", "#!/bin/sh\nexit 0\n")
+            capture = self._fake_capture(root / "capture")
+            server = self._write_executable(root / "gdbserver", "#!/bin/sh\nexit 0\n")
+            path = self._write_config(
+                root,
+                capture=capture,
+                nm=capture,
+                rr=capture,
+                triggers={
+                    "arbitrary": {
+                        "binary": str(binary),
+                        "expectedStatus": 0,
+                        "nativeTransport": "gdbserver",
+                    }
+                },
+            )
+            document = json.loads(path.read_text())
+            document["gdbserverProgram"] = str(server)
+            document["triggerTraceMode"] = "whole-program"
+            path.write_text(json.dumps(document))
+            config = evaluation.load_config(path)
+            with (
+                mock.patch.object(evaluation, "ManagedProcess") as managed,
+                mock.patch.object(
+                    evaluation, "_wait_for_gdbserver", return_value=43210
+                ),
+                mock.patch.object(
+                    evaluation.socket, "create_connection", side_effect=AssertionError
+                ),
+            ):
+                rows, metadata, passed = evaluation.evaluate_trigger(
+                    config, config.triggers["arbitrary"], 0, root / "run", "msgpack"
+                )
+            self.assertTrue(passed, rows)
+            self.assertEqual(metadata["nativeTransport"], "gdbserver")
+            self.assertEqual(metadata["gdbserverProgram"], str(server))
+            self.assertEqual(metadata["gdbserverSha256"], evaluation._sha256(server))
+            command = managed.call_args.args[0]
+            self.assertEqual(command[:3], (str(server), "--once", "127.0.0.1:0"))
+            self.assertEqual(managed.call_args.kwargs["env"]["SHELL"], "/bin/sh")
+            self.assertEqual(managed.call_args.kwargs["env"]["ZDOTDIR"], "/nonexistent")
+            managed.return_value.__exit__.assert_called_once()
+            self.assertIn(
+                "-r 127.0.0.1:43210",
+                (root / "run/logs/arbitrary-0-capture.log").read_text(),
+            )
+            with (
+                mock.patch.object(evaluation, "ManagedProcess") as managed,
+                mock.patch.object(
+                    evaluation,
+                    "_wait_for_gdbserver",
+                    side_effect=evaluation.EvaluationError("not ready"),
+                ),
+            ):
+                rows, _, passed = evaluation.evaluate_trigger(
+                    config, config.triggers["arbitrary"], 1, root / "run", "msgpack"
+                )
+            self.assertFalse(passed)
+            managed.return_value.__exit__.assert_called_once()
+            self.assertEqual(rows[-1]["status"], "failed")
+            del document["gdbserverProgram"]
+            path.write_text(json.dumps(document))
+            with self.assertRaises(evaluation.EvaluationError):
+                evaluation.load_config(path)
+
+    def test_gdbserver_lifecycle_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            log = Path(temporary_directory) / "server.log"
+            with (
+                mock.patch.object(evaluation.subprocess, "Popen") as popen,
+                mock.patch.object(evaluation.os, "killpg") as killpg,
+            ):
+                process = popen.return_value
+                process.pid = 1234
+                process.poll.return_value = None
+                process.wait.side_effect = [
+                    evaluation.subprocess.TimeoutExpired("server", 3),
+                    0,
+                ]
+                with self.assertRaisesRegex(
+                    evaluation.EvaluationError, "capture failed"
+                ):
+                    with evaluation.ManagedProcess(
+                        ("server",), log, env={"SHELL": "/bin/sh"}
+                    ):
+                        raise evaluation.EvaluationError("capture failed")
+                self.assertEqual(
+                    killpg.call_args_list,
+                    [
+                        mock.call(1234, evaluation.signal.SIGTERM),
+                        mock.call(1234, evaluation.signal.SIGKILL),
+                    ],
+                )
+                self.assertTrue(popen.call_args.kwargs["start_new_session"])
+                self.assertTrue(popen.call_args.kwargs["stdout"].closed)
+
+    def test_gdbserver_readiness_does_not_connect(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            log = Path(temporary_directory) / "server.log"
+            log.write_text("Process created; pid = 123\nListening on port 43210\n")
+            process = mock.Mock()
+            process.poll.return_value = None
+            with mock.patch.object(
+                evaluation.socket, "socket", side_effect=AssertionError
+            ):
+                self.assertEqual(evaluation._wait_for_gdbserver(process, log), 43210)
+                process.poll.return_value = 1
+                with self.assertRaisesRegex(evaluation.EvaluationError, "exited"):
+                    evaluation._wait_for_gdbserver(process, log)
+                process.poll.return_value = None
+                log.write_text("Listening on port 99999\n")
+                with self.assertRaisesRegex(evaluation.EvaluationError, "invalid port"):
+                    evaluation._wait_for_gdbserver(process, log)
+                log.write_text("")
+                with mock.patch.object(evaluation, "SERVER_STARTUP_TIMEOUT_SECONDS", 0):
+                    with self.assertRaisesRegex(
+                        evaluation.EvaluationError, "timed out"
+                    ):
+                        evaluation._wait_for_gdbserver(process, log)
+
     def test_native_role_collects_baseline_trace_and_component_times(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

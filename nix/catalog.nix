@@ -144,6 +144,7 @@ let
       sources = [ "main.c" ];
       cflags = [ "-mavx" ];
       freestanding = false;
+      nativeCaptureTransport = "gdbserver";
       expected = "A 32-byte YMM round trip preserves all bytes.";
       provenance = "https://bugs.launchpad.net/qemu/+bug/1861404";
     };

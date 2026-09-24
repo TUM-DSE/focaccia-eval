@@ -70,6 +70,7 @@ class Trigger:
     binary: Path
     expected_status: int
     witness_sha256: str | None = None
+    native_transport: str = "local"
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +136,7 @@ class EvaluationConfig:
     emulators: dict[str, EmulatorVariant]
     emulator_cases: dict[str, EmulatorCase]
     trigger_trace_mode: str = "whole-program"
+    gdbserver_program: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,8 +177,10 @@ class ManagedProcess:
         cwd: Path | None = None,
         stdin_path: Path | None = None,
         pipe_stdin: bool = False,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.command = tuple(command)
+        self.env = env
         self.log_path = log_path
         self.cwd = cwd
         self.stdin_path = stdin_path
@@ -195,6 +199,7 @@ class ManagedProcess:
             self.process = subprocess.Popen(
                 self.command,
                 cwd=self.cwd,
+                env=self.env,
                 stdin=(subprocess.PIPE if self.pipe_stdin else self._stdin),
                 stdout=self._log,
                 stderr=subprocess.STDOUT,
@@ -290,6 +295,11 @@ def load_config(path: Path) -> EvaluationConfig:
     capture_program = _required_string(
         document, "captureProgram", "Evaluation configuration"
     )
+    gdbserver_program = document.get("gdbserverProgram")
+    if gdbserver_program is not None and (
+        not isinstance(gdbserver_program, str) or not gdbserver_program
+    ):
+        raise EvaluationError("Invalid gdbserverProgram.")
     nm_program = _required_string(document, "nmProgram", "Evaluation configuration")
     rr_program = _required_string(document, "rrProgram", "Evaluation configuration")
     http_server_program = _required_string(
@@ -334,11 +344,17 @@ def load_config(path: Path) -> EvaluationConfig:
             or re.fullmatch(r"[0-9a-f]{64}", witness_sha256) is None
         ):
             raise EvaluationError(f"{context} has an invalid witness hash.")
+        native_transport = encoded.get("nativeTransport", "local")
+        if native_transport not in ("local", "gdbserver"):
+            raise EvaluationError(f"{context} has unsupported nativeTransport.")
+        if native_transport == "gdbserver" and gdbserver_program is None:
+            raise EvaluationError(f"{context} requires gdbserverProgram.")
         triggers[identifier] = Trigger(
             identifier,
             Path(_required_string(encoded, "binary", context)),
             _required_status(encoded, context),
             witness_sha256,
+            native_transport,
         )
 
     applications: dict[str, Application] = {}
@@ -529,6 +545,7 @@ def load_config(path: Path) -> EvaluationConfig:
         role=role,
         system=system,
         capture_program=Path(capture_program),
+        gdbserver_program=Path(gdbserver_program) if gdbserver_program else None,
         nm_program=Path(nm_program),
         rr_program=Path(rr_program),
         http_server_program=Path(http_server_program),
@@ -761,6 +778,7 @@ def evaluate_trigger(
         "binarySha256": _sha256(binary),
         "binaryStorePath": str(trigger.binary),
         "expectedNativeStatus": trigger.expected_status,
+        "nativeTransport": trigger.native_transport,
         "traceFormat": trace_format,
     }
     if trigger.witness_sha256 is not None:
@@ -822,7 +840,65 @@ def evaluate_trigger(
         trace_format,
         str(binary),
     )
-    capture = run_process(capture_command, timeout_seconds=CAPTURE_TIMEOUT_SECONDS)
+    try:
+        if trigger.native_transport == "gdbserver":
+            if config.gdbserver_program is None:
+                raise EvaluationError("gdbserver transport requires gdbserverProgram.")
+            transport_env = {
+                **os.environ,
+                "SHELL": "/bin/sh",
+                "ZDOTDIR": "/nonexistent",
+            }
+            metadata["gdbserverProgram"] = str(config.gdbserver_program)
+            metadata["gdbserverSha256"] = _sha256(config.gdbserver_program)
+            metadata["nativeTransportEnvironment"] = {
+                "SHELL": transport_env["SHELL"],
+                "ZDOTDIR": transport_env["ZDOTDIR"],
+            }
+            server_log = (
+                logs_directory / f"{trigger.identifier}-{iteration}-gdbserver.log"
+            )
+            with ManagedProcess(
+                (str(config.gdbserver_program), "--once", "127.0.0.1:0", str(binary)),
+                server_log,
+                env=transport_env,
+            ) as server:
+                port = _wait_for_gdbserver(server, server_log)
+                endpoint = f"127.0.0.1:{port}"
+                remote_capture_command = (
+                    *capture_command[:-1],
+                    "-r",
+                    endpoint,
+                    str(binary),
+                )
+                metadata["nativeTransportEndpoint"] = endpoint
+                metadata["captureCommand"] = list(remote_capture_command)
+                capture = run_process(
+                    remote_capture_command,
+                    env=transport_env,
+                    timeout_seconds=CAPTURE_TIMEOUT_SECONDS,
+                )
+        elif trigger.native_transport == "local":
+            capture = run_process(
+                capture_command, timeout_seconds=CAPTURE_TIMEOUT_SECONDS
+            )
+        else:
+            raise EvaluationError(
+                f"Unsupported native transport {trigger.native_transport!r}."
+            )
+    except (EvaluationError, OSError) as error:
+        rows.append(
+            result_row(
+                trigger.identifier,
+                "native-cross-validated",
+                "total",
+                None,
+                iteration,
+                "failed",
+                str(error),
+            )
+        )
+        return rows, metadata, False
     (logs_directory / f"{trigger.identifier}-{iteration}-capture.log").write_text(
         capture.output
     )
@@ -898,6 +974,26 @@ def evaluate_trigger(
     metadata["serializationSeconds"] = timings["serialization"]
     metadata["captureProcessSeconds"] = capture.elapsed
     return rows, metadata, True
+
+
+def _wait_for_gdbserver(process: subprocess.Popen[str], log_path: Path) -> int:
+    """Read GNU gdbserver's allocated port without consuming its one connection."""
+    deadline = time.monotonic() + SERVER_STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        status = process.poll()
+        if status is not None:
+            raise EvaluationError(
+                f"gdbserver exited with status {status} before readiness."
+            )
+        output = log_path.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"^Listening on port ([0-9]+)\s*$", output, re.MULTILINE)
+        if match:
+            port = int(match.group(1))
+            if not 1 <= port <= 65535:
+                raise EvaluationError("gdbserver reported an invalid port.")
+            return port
+        time.sleep(0.05)
+    raise EvaluationError("gdbserver readiness timed out.")
 
 
 def _free_loopback_port() -> int:

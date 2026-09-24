@@ -29,6 +29,20 @@ let
       python -m unittest -v ${lib.concatMapStringsSep " " (test: "test_evaluation.EvaluationTests.${test}") tests}
       touch "$out"
     '';
+  nativeTriggerGdbserverCheck = pkgs.runCommand "native-trigger-gdbserver-transport" {
+    nativeBuildInputs = [ pkgs.python3 pkgs.ruff pkgs.jq ];
+  } ''
+    mkdir evaluation
+    cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+    cp ${../evaluation/test_evaluation.py} evaluation/test_evaluation.py
+    cd evaluation
+    ruff check evaluation.py test_evaluation.py
+    ruff format --check evaluation.py test_evaluation.py
+    python -m unittest -v test_evaluation.EvaluationTests.test_native_trigger_gdbserver_transport test_evaluation.EvaluationTests.test_gdbserver_readiness_does_not_connect test_evaluation.EvaluationTests.test_gdbserver_lifecycle_cleanup
+    jq -e '.gdbserverProgram == "${pkgs.gdb}/bin/gdbserver" and (if .triggers | has("1861404") then .triggers."1861404".nativeTransport == "gdbserver" else true end)' ${nativeEvaluationConfig}
+    test -x ${pkgs.gdb}/bin/gdbserver
+    touch "$out"
+  '';
   nativeOracleIdentityCheck = mkIdentityFixtureCheck "native-oracle-identity" [
     "test_native_oracle_identity_requires_explicit_producer_fields"
     "test_native_oracle_paths_reject_escape_and_allow_bundle_symlink"
@@ -831,6 +845,7 @@ in
   inherit
     codeNamingPolicyCheck
     nativeOracleIdentityCheck
+    nativeTriggerGdbserverCheck
     applicationOracleProducerHashCheck
     pluginReferenceAcceptanceCheck
     evaluationNativeCheck

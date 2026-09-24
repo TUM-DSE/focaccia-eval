@@ -275,6 +275,7 @@ let
     triggerTraceMode = "whole-program";
     inherit role system;
     captureProgram = focaccia.apps.${system}.capture-transforms.program;
+    gdbserverProgram = "${pkgs.gdb}/bin/gdbserver";
     nmProgram = "${pkgs.binutils}/bin/nm";
     rrProgram = "${focaccia.packages.${system}.rr}/bin/rr";
     httpServerProgram = "${pkgs.python3}/bin/python";
@@ -286,6 +287,7 @@ let
       if role == "native" then
         lib.mapAttrs (id: trigger: {
           binary = "${triggerPackages.${id}}/bin/reproducer-${id}";
+          nativeTransport = trigger.nativeCaptureTransport or "local";
           expectedStatus = trigger.expectedNativeStatus or 0;
           witnessSha256 = triggerWitnessHashes.${id};
         }) nativeTriggerDefinitions
@@ -641,6 +643,7 @@ let
     nix2container = inputs.nix2container.packages.${system}.nix2container;
     dependencyPackages = [
       plotPython
+      pkgs.gdb
       focaccia.packages.${system}.focaccia
       focaccia.packages.${system}.rr
     ]
@@ -946,6 +949,7 @@ in
       native-oracle-identity = nativeOracleIdentityCheck;
       application-oracle-producer-hash = applicationOracleProducerHashCheck;
       plugin-reference-acceptance = pluginReferenceAcceptanceCheck;
+      native-trigger-gdbserver-transport = evaluationChecks.nativeTriggerGdbserverCheck;
       evaluate-native-interface = evaluationNativeCheck;
       evaluation-selective-applications = evaluationNativeCheck;
       full-curl-measurement-modes = evaluationFullCurlModesCheck;
