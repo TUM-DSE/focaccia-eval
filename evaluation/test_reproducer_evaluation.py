@@ -222,6 +222,7 @@ class ReproducerEvaluationTests(unittest.TestCase):
                 reference_emulator="qemu-reference",
                 reference_version="2",
                 reference_program=Path("/reference"),
+                reference_outcome="accepted",
                 primary_error=evaluation.ErrorSignature(
                     "register-content-mismatch", "RAX"
                 ),
@@ -406,6 +407,40 @@ class ReproducerEvaluationTests(unittest.TestCase):
             evaluation.ReproducerEvaluationError, "exactly one complete transition"
         ):
             evaluation.require_reference_acceptance(incomplete_reference)
+
+    def test_configured_reference_outcomes_are_exact_and_reject_unrelated_mismatches(self):
+        contract = evaluation.MismatchContract(
+            0x401000,
+            0x401005,
+            (evaluation.ErrorSignature("register-content-mismatch", "XMM1"),),
+        )
+        shared = self._report(
+            status="mismatch",
+            errors=[self._confirmed("register-content-mismatch", "XMM1")],
+        )
+        evaluation.require_shared_reference_mismatch(shared, contract)
+        shared["validation"]["entries"][0]["errors"][0]["subject"] = "RAX"
+        with self.assertRaises(evaluation.ReproducerEvaluationError):
+            evaluation.require_shared_reference_mismatch(shared, contract)
+
+        partial_contract = evaluation.MismatchContract(0x401000, 0x401005, ())
+        partial = self._report(status="incomplete")
+        partial["trace"]["complete"] = False
+        partial["validation"]["diagnostics"] = [{
+            "code": "snapshot-register-unavailable",
+            "level": "incomplete",
+            "message": "Unable to observe register ZMM0",
+        }]
+        partial["validation"]["entries"][0]["errors"] = [{
+            "severity": "incomplete",
+            "message": "Value of register ZMM0 is unavailable",
+        }]
+        evaluation.require_partial_zmm0_reference(partial, partial_contract)
+        partial["validation"]["entries"][0]["errors"].append(
+            self._confirmed("memory-content-mismatch", "0x4000")
+        )
+        with self.assertRaises(evaluation.ReproducerEvaluationError):
+            evaluation.require_partial_zmm0_reference(partial, partial_contract)
 
     def test_native_oracle_control_requires_successful_trigger_and_exact_prefix(self):
         artifacts = evaluation.SourceArtifacts(

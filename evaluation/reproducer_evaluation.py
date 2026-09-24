@@ -85,6 +85,7 @@ class CaseConfig:
     reference_emulator: str
     reference_version: str
     reference_program: Path | None
+    reference_outcome: str
     primary_error: ErrorSignature
     source_symbol: str | None
     entry_prefix_symbol: str | None
@@ -199,6 +200,13 @@ def load_config(path: Path) -> Config:
         if reference_kind not in {"qemu", "native-oracle"}:
             raise ReproducerEvaluationError(f"{context} has invalid referenceKind.")
         reference_program = encoded.get("referenceProgram")
+        reference_outcome = encoded.get("referenceOutcome", "accepted")
+        if reference_outcome not in {"accepted", "shared-mismatch", "partial-zmm0"}:
+            raise ReproducerEvaluationError(f"{context} has invalid referenceOutcome.")
+        if reference_kind != "qemu" and reference_outcome != "accepted":
+            raise ReproducerEvaluationError(
+                f"{context} native-oracle control requires accepted referenceOutcome."
+            )
         if reference_kind == "qemu":
             if not isinstance(reference_program, str) or not reference_program:
                 raise ReproducerEvaluationError(
@@ -242,6 +250,7 @@ def load_config(path: Path) -> Config:
                     encoded, "referenceVersion", context
                 ),
                 reference_program=parsed_reference_program,
+                reference_outcome=reference_outcome,
                 primary_error=_parse_error_signature(
                     encoded.get("primaryError"), f"{context} primaryError"
                 ),
@@ -847,6 +856,66 @@ def require_reference_acceptance(report: dict[str, Any]) -> None:
         )
 
 
+def require_shared_reference_mismatch(
+    report: dict[str, Any], contract: MismatchContract
+) -> None:
+    """Admit only the same complete, localized mismatch as the buggy control."""
+    require_buggy_reproduction(report, contract)
+
+
+def require_partial_zmm0_reference(
+    report: dict[str, Any], contract: MismatchContract
+) -> None:
+    """Admit the paper's explicit partial ZMM0 observation, never a mismatch."""
+    if report.get("status") != "incomplete":
+        raise ReproducerEvaluationError(
+            f"Partial reference reported {report.get('status')!r}, not incomplete."
+        )
+    trace = report.get("trace")
+    if not isinstance(trace, dict) or (
+        trace.get("state_count"),
+        trace.get("transform_count"),
+        trace.get("terminal_reached"),
+        trace.get("complete"),
+    ) != (2, 1, True, False):
+        raise ReproducerEvaluationError(
+            "Partial reference did not retain the exact terminal boundary pair."
+        )
+    validation = report.get("validation")
+    entries = validation.get("entries") if isinstance(validation, dict) else None
+    diagnostics = validation.get("diagnostics") if isinstance(validation, dict) else None
+    if not isinstance(entries, list) or not isinstance(diagnostics, list):
+        raise ReproducerEvaluationError("Partial reference lacks structured validation evidence.")
+    confirmed = [
+        signature
+        for entry in entries
+        if isinstance(entry, dict)
+        for signature in _confirmed_signatures(entry)
+    ]
+    unavailable = [
+        item for item in diagnostics
+        if isinstance(item, dict)
+        and item.get("code") == "snapshot-register-unavailable"
+        and item.get("level") == "incomplete"
+        and "ZMM0" in str(item.get("message", ""))
+    ]
+    exact_entries = [
+        entry for entry in entries
+        if isinstance(entry, dict)
+        and tuple(entry.get("transition_range", ())) == contract.transition_range
+        and any(
+            isinstance(error, dict)
+            and error.get("severity") == "incomplete"
+            and "ZMM0" in str(error.get("message", ""))
+            for error in entry.get("errors", ())
+        )
+    ]
+    if confirmed or len(unavailable) != 1 or len(exact_entries) != 1:
+        raise ReproducerEvaluationError(
+            "Partial reference is not the configured ZMM0-unavailable outcome."
+        )
+
+
 def require_native_oracle_acceptance(
     artifacts: SourceArtifacts,
     entry_prefix: EntryPrefix | None,
@@ -1018,7 +1087,15 @@ def evaluate_case(
             oracle,
             validation_root / "reference",
         )
-        require_reference_acceptance(reference_report)
+        if case.reference_outcome == "accepted":
+            require_reference_acceptance(reference_report)
+            reference_status = "accepted"
+        elif case.reference_outcome == "shared-mismatch":
+            require_shared_reference_mismatch(reference_report, contract)
+            reference_status = "shared-mismatch"
+        else:
+            require_partial_zmm0_reference(reference_report, contract)
+            reference_status = "partial-zmm0"
         reference_document = {
             "kind": "qemu",
             "emulator": case.reference_emulator,
@@ -1031,7 +1108,8 @@ def evaluate_case(
             "reportSha256": common._sha256(
                 validation_root / "reference" / "validation.json"
             ),
-            "status": "accepted",
+            "status": reference_status,
+            "referenceCorrectnessEstablished": case.reference_outcome == "accepted",
         }
     else:
         require_native_oracle_acceptance(
@@ -1046,6 +1124,7 @@ def evaluate_case(
             "oracle": str(artifacts.oracle),
             "oracleSha256": common._sha256(artifacts.oracle),
             "status": "accepted",
+            "referenceCorrectnessEstablished": True,
         }
 
     source_document = {
@@ -1073,7 +1152,12 @@ def evaluate_case(
         ),
     }
     return {
-        "status": "diagnostic-target-reproduced" if diagnostic_adapter else "passed",
+        "status": (
+            "diagnostic-target-reproduced" if diagnostic_adapter
+            else "detected-reference-shared" if case.reference_outcome == "shared-mismatch"
+            else "detected-reference-partial" if case.reference_outcome == "partial-zmm0"
+            else "passed"
+        ),
         "admission": "diagnostic-target-only" if diagnostic_adapter else "passed-source",
         "notClaims": DIAGNOSTIC_NOT_CLAIMS if diagnostic_adapter else [],
         "diagnosticSource": artifacts.metadata if diagnostic_adapter else None,

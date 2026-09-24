@@ -432,6 +432,7 @@ let
       referenceEmulator = "qemu-current-reference";
       referenceVersion = qemuReproducerReferenceVersion;
       referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      referenceOutcome = "shared-mismatch";
       primaryError = {
         code = "register-content-mismatch";
         subject = "XMM1";
@@ -489,6 +490,7 @@ let
       referenceEmulator = "qemu-current-reference";
       referenceVersion = qemuReproducerReferenceVersion;
       referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
+      referenceOutcome = "partial-zmm0";
       primaryError = {
         code = "memory-content-mismatch";
         subject = "0x40007fcc20";
@@ -959,6 +961,18 @@ in
       marker-free-trigger-whole-program = markerFreeTriggerWholeProgramCheck;
       emulator-evaluation-dispatch = emulatorEvaluationDispatchCheck;
       reproducer-effectiveness-evaluation = reproducerEffectivenessEvaluationCheck;
+      reproducer-reference-outcome-contracts = pkgs.runCommand
+        "reproducer-reference-outcome-contracts" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v \
+            test_reproducer_evaluation.ReproducerEvaluationTests.test_configured_reference_outcomes_are_exact_and_reject_unrelated_mismatches
+          touch "$out"
+        '';
       diagnostic-reproducer-source-admission = pkgs.runCommand
         "diagnostic-reproducer-source-admission" { } ''
           mkdir evaluation
