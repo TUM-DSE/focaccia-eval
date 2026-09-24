@@ -184,7 +184,7 @@ nix run .#plot-evaluation -- \
   --reproducer-sizes runs/evaluation-001/reproducers/x86_64-linux/reproducer-sizes.json
 ```
 
-PDF files are written to `runs/evaluation-001/figures` by default. Missing, failed, or provenance-invalid measurements produce warnings and are omitted. They are never replaced with zeros or paper values.
+PDF files are written to `runs/evaluation-001/figures` by default. When the run contains measurements for the same case on multiple emulator hosts, plots are separated into `figures/<system>/`, with `figures/multi-host-summary.json` indexing the outputs; host measurements are never merged. Missing, failed, or provenance-invalid measurements produce warnings and are omitted. They are never replaced with zeros or paper values.
 
 `combined-bug-study.pdf` is the sole exception. It presents the fixed and manually reviewed QEMU and Box64 classification percentages from the paper and does not depend on runtime measurements.
 

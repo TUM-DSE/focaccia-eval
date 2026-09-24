@@ -135,7 +135,7 @@ Generate available figures from one retained run with:
 nix run .#plot-evaluation -- --input runs/evaluation-001
 ```
 
-Outputs default to `runs/evaluation-001/figures/`. Existing known figure names are removed before generation so an omitted figure cannot survive as stale evidence. The Eliza `evaluate-emulator` stage writes this input to `reproducers/x86_64-linux/reproducer-sizes.json`. Pass that path as optional `--reproducer-sizes PATH`; it uses schema `focaccia-reproducer-size-evidence-v1`, names guest and minimized binaries, binds both with SHA-256, and records the exact Focaccia revision. Artifact paths are relative to the evidence file:
+Outputs default to `runs/evaluation-001/figures/`. If a case has measurements from multiple emulator hosts, the command produces separate `figures/<system>/` directories and a `figures/multi-host-summary.json` index instead of mixing host measurements. Single-host runs retain the flat output layout. Existing known figure names are removed before generation so an omitted figure cannot survive as stale evidence. The Eliza `evaluate-emulator` stage writes this input to `reproducers/x86_64-linux/reproducer-sizes.json`. Pass that path as optional `--reproducer-sizes PATH`; it uses schema `focaccia-reproducer-size-evidence-v1`, names guest and minimized binaries, binds both with SHA-256, and records the exact Focaccia revision. Artifact paths are relative to the evidence file:
 
 ```json
 {
