@@ -538,6 +538,13 @@ let
         )
         touch "$out"
       '';
+  historicalQemuAvxCpuModelCheck =
+    assert
+      system != "x86_64-linux"
+      || qemuCaseEvaluationData."qemu-1861404".emulatorCases."qemu-1861404".qemuCpuModel == "max";
+    pkgs.runCommand "historical-qemu-avx-cpu-model" { } ''
+      touch "$out"
+    '';
   terminalValidationCutpointCheck =
     assert
       system != "aarch64-linux"
@@ -867,6 +874,7 @@ in
     evaluationEmulatorTraceFormatCheck
     evaluationQemuDriverCheck
     exactGuestSignalLocalizationCheck
+    historicalQemuAvxCpuModelCheck
     terminalValidationCutpointCheck
     unmatchedTransformSkippingCheck
     exactApplicationMismatchLocalizationCheck

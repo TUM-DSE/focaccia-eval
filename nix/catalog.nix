@@ -400,6 +400,7 @@ let
     "qemu-1861404" = {
       trigger = "1861404";
       emulator = "qemu-4-2-0";
+      qemuCpuModel = "max";
       validationCutpoint = "stop";
       expectedMismatchSourceSymbol = "focaccia_trace_start";
       expectedMismatchSourceOffset = 0;

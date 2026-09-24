@@ -704,6 +704,7 @@ let
     evaluationEmulatorTraceFormatCheck
     evaluationQemuDriverCheck
     exactGuestSignalLocalizationCheck
+    historicalQemuAvxCpuModelCheck
     terminalValidationCutpointCheck
     unmatchedTransformSkippingCheck
     exactApplicationMismatchLocalizationCheck
@@ -1023,6 +1024,7 @@ in
       qemu-plugin-structured-localization = evaluationQemuPluginDriverCheck;
       native-witness-identity = nativeWitnessIdentityCheck;
       exact-guest-signal-localization = exactGuestSignalLocalizationCheck;
+      historical-qemu-avx-cpu-model = historicalQemuAvxCpuModelCheck;
       terminal-validation-cutpoint = terminalValidationCutpointCheck;
       qemu-single-case-evaluation-closures = qemuCaseEvaluationCheck;
       paper-emulator-guest-host-matrix = paperEmulatorMatrixCheck;
