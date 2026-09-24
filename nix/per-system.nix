@@ -656,6 +656,7 @@ let
     commandNames = artifactCommandNames;
   };
   dockerArtifactImage = dockerOutputs.image;
+  dockerArtifactLoader = dockerOutputs.loadApplication;
   dockerArtifactInterfaceCheck = dockerOutputs.interfaceCheck;
   evaluationChecks = import ./mk-evaluation-checks.nix {
     inherit
@@ -913,6 +914,7 @@ in
       evaluation-plots = evaluationPlots;
       evaluation-python = plotOutputs.python;
       docker-artifact = dockerArtifactImage;
+      load-docker-artifact = dockerArtifactLoader;
       focaccia = focaccia.packages.${system}.focaccia;
       focaccia-qemu = focaccia.packages.${system}.qemu-plugin;
       qemu-8-2-1-plugin = qemuPlugin821;
@@ -1002,6 +1004,8 @@ in
       incremental-evaluation-composition = incrementalEvaluationCompositionCheck;
       evaluation-msgpack-default = evaluationMsgpackDefaultCheck;
       docker-artifact-interface = dockerArtifactInterfaceCheck;
+      docker-artifact-transport-interface = dockerOutputs.transportCheck;
+      docker-artifact-root-command-path = dockerOutputs.rootCommandPathCheck;
       nix2container-builder-interface = dockerOutputs.builderInterfaceCheck;
       profile-report-timings = evaluationProfileReportCheck;
       evaluation-capture-timeout = evaluationCaptureTimeoutCheck;
@@ -1071,6 +1075,10 @@ in
       plot-evaluation = {
         type = "app";
         program = "${plotEvaluationRunner}/bin/plot-evaluation";
+      };
+      load-docker-artifact = {
+        type = "app";
+        program = "${dockerArtifactLoader}/bin/load-docker-artifact";
       };
       focaccia = focaccia.apps.${system}.default;
       capture-transforms = focaccia.apps.${system}.capture-transforms;

@@ -87,8 +87,13 @@ Build and load the artifact image for the current Linux architecture.
 
 ```bash
 nix build -L .#docker-artifact
-docker load < result
+nix run -L .#load-docker-artifact
 ```
+
+`docker-artifact` is a nix2container image descriptor, not a Docker archive, so
+passing `result` to `docker load` does not work. `load-docker-artifact` copies
+that descriptor and its closure to the local Docker daemon without constructing
+an additional archive.
 
 The image tag is `focaccia-artifact:<revision>`, or `focaccia-artifact:dirty` for an uncommitted tree. The x86-64 and AArch64 images use the same logical name but contain architecture-specific evaluation closures.
 
@@ -113,7 +118,9 @@ docker run --rm \
 
 The image also provides `evaluate-emulator`, `plot-evaluation`, the focused QEMU evaluators, and host-specific programs such as `evaluate-native-curl-full` and `evaluate-reproducers`. Nix is not required at runtime.
 
-Run an image only on a Docker host with the same physical ISA. Native collection requires debugger attachment, perf events, and personality control. x86-64 RR application capture also requires a compatible host PMU.
+Run an image only on a Docker host with the same physical ISA. Use the same host directory as the `/artifacts` bind mount on each machine; the evaluator records system, binary, oracle, workload, and revision identities and rejects incompatible or duplicate retained cases. Copying a shared run between hosts must preserve its contents and relative layout.
+
+Native collection requires debugger attachment, perf events, and personality control. x86-64 RR application capture also requires a compatible host PMU.
 
 ## Historical emulators
 
@@ -167,7 +174,7 @@ After both hosts have produced the required native oracles, run the host-adaptiv
 nix run -L .#evaluate-emulator -- --input runs/evaluation-001
 ```
 
-The command selects stages for the physical host. It attempts every independent stage before reporting an ordinary failure. On AArch64 it also generates and validates all eight Figure 8 reproducers.
+The command selects closures and additional stages for the physical host. Its QEMU evaluator contains the 14 catalogued QEMU trigger cases plus the three selective application consumers; cases without compatible retained native input fail rather than becoming samples. On AArch64 the wrapper additionally runs the Figure 8 reproducer workflow, Box64, and full-Curl QEMU validation. The Figure 8 workflow currently publishes eight reproducers; its wider internal control executions are not a separate default paper-case count. Independent stages continue after an ordinary failure.
 
 Generate every figure supported by successful evidence in the run.
 

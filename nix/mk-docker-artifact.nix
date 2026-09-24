@@ -55,13 +55,13 @@ let
       }
     ];
     config = {
-      Cmd = [ "${environment}/bin/bash" ];
+      Cmd = [ "/bin/bash" ];
       Env = [
         "HOME=/tmp"
         "TMPDIR=/tmp"
         "FONTCONFIG_FILE=${fontsConf}"
         "MPLCONFIGDIR=/tmp/matplotlib"
-        "PATH=${environment}/bin"
+        "PATH=/bin"
         "PYTHONUNBUFFERED=1"
       ];
       WorkingDir = "/artifacts";
@@ -112,6 +112,33 @@ let
         test -x ${image.copyToRegistry}/bin/copy-to-registry
         touch "$out"
       '';
+  loadApplication = pkgs.writeShellScriptBin "load-docker-artifact" ''
+    exec ${image.copyToDockerDaemon}/bin/copy-to-docker-daemon "$@"
+  '';
+  transportCheck = pkgs.runCommand "docker-artifact-transport-interface"
+    { nativeBuildInputs = [ pkgs.jq ]; }
+    ''
+      # nix2container emits a versioned descriptor, not a docker-load archive.
+      jq -e '.version == 1 and .["image-config"].Cmd != null' ${image} >/dev/null
+      test -x ${loadApplication}/bin/load-docker-artifact
+      grep -F '${image.copyToDockerDaemon}/bin/copy-to-docker-daemon' \
+        ${loadApplication}/bin/load-docker-artifact >/dev/null
+      ! grep -F 'docker load < result' ${../README.md}
+      grep -F 'nix run -L .#load-docker-artifact' ${../README.md} >/dev/null
+      grep -F 'nix run -L .#load-docker-artifact' ${../evaluation/README.md} >/dev/null
+      touch "$out"
+    '';
+  rootCommandPathCheck = pkgs.runCommand "docker-artifact-root-command-path"
+    { nativeBuildInputs = [ pkgs.jq ]; }
+    ''
+      jq -e --arg environment '${environment}' '
+        .["image-config"].Cmd == ["/bin/bash"] and
+        (.["image-config"].Env | index("PATH=/bin")) != null and
+        ([.layers[].paths[] | select(.path == $environment) |
+          .options.rewrite.repl] == [""])
+      ' ${image} >/dev/null
+      touch "$out"
+    '';
   interfaceCheck =
     pkgs.runCommand "docker-artifact-interface"
       {
@@ -121,9 +148,9 @@ let
       }
       ''
         jq -e \
-          --arg shell '${environment}/bin/bash' \
+          --arg shell '/bin/bash' \
           --arg fontconfig 'FONTCONFIG_FILE=${fontsConf}' \
-          --arg path 'PATH=${environment}/bin' \
+          --arg path 'PATH=/bin' \
           --arg system '${system}' \
           '.["image-config"] | .Entrypoint == null and
            .Cmd == [$shell] and
@@ -160,6 +187,9 @@ in
     image
     interfaceCheck
     builderInterfaceCheck
+    loadApplication
+    transportCheck
+    rootCommandPathCheck
     tag
     ;
 }

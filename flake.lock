@@ -98,11 +98,11 @@
         "uv2nix": "uv2nix"
       },
       "locked": {
-        "lastModified": 1786674170,
-        "narHash": "sha256-acR1z7LTyOToAXw1EU25fdwws4gtJXvXPuNT97cyMvY=",
+        "lastModified": 1790257194,
+        "narHash": "sha256-j60YGUX8FVIZsUm4V/nbp8uqARjaPIYkf6xaFssuywA=",
         "ref": "refs/heads/main",
-        "rev": "40d7b7ed83f9582c60c27e5af41c7438b13703e7",
-        "revCount": 335,
+        "rev": "42764584d7cc8339d3777d25727a9d8f0ce20441",
+        "revCount": 336,
         "submodules": false,
         "type": "git",
         "url": "https://github.com/TUM-DSE/focaccia.git"
