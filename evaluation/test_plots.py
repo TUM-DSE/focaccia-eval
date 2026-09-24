@@ -349,24 +349,41 @@ class HostMeasurementIdentityTests(unittest.TestCase):
                 ):
                     plots.load_measurements(root)
 
-    def test_cli_rejects_ambiguity_before_modifying_figures(self):
+    def test_cli_separates_multi_host_figures_and_measurements(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             self.write_evidence(root, "aarch64-linux", 2, profile=True)
             self.write_evidence(root, "x86_64-linux", 40, profile=True)
             output = root / "figures"
-            output.mkdir()
-            retained = output / plots.FIGURE_NAMES[0]
-            retained.write_bytes(b"retained figure")
             with (
                 patch("sys.argv", ["plots", "--input", str(root)]),
-                patch("sys.stderr", new_callable=io.StringIO) as stderr,
-                self.assertRaises(SystemExit) as error,
+                patch("sys.stderr", new_callable=io.StringIO),
             ):
-                plots.main()
-            self.assertEqual(error.exception.code, 2)
-            self.assertIn("ambiguous measurement systems", stderr.getvalue())
-            self.assertEqual(retained.read_bytes(), b"retained figure")
+                self.assertEqual(plots.main(), 0)
+
+            self.assertEqual(
+                plots.load_measurements(root, system="aarch64-linux").get(
+                    "508", "qemu-test", "execution"
+                ),
+                2,
+            )
+            self.assertEqual(
+                plots.load_measurements(root, system="x86_64-linux").get(
+                    "508", "qemu-test", "execution"
+                ),
+                40,
+            )
+            self.assertFalse(
+                any((output / name).exists() for name in plots.FIGURE_NAMES)
+            )
+            summary = json.loads(
+                (output / plots.MULTI_HOST_SUMMARY_NAME).read_text(encoding="utf-8")
+            )
+            self.assertEqual(set(summary["hosts"]), {"aarch64-linux", "x86_64-linux"})
+            for system in summary["hosts"]:
+                figure = output / system / "combined-bug-study.pdf"
+                self.assertGreater(figure.stat().st_size, 0)
+                self.assertIn(figure.name, summary["hosts"][system])
 
 
 if __name__ == "__main__":

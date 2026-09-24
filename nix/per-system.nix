@@ -1058,6 +1058,7 @@ in
       reproducer-size-measurement-fidelity = plotOutputs.sizeMeasurementCheck;
       explicit-profile-relocation = plotOutputs.profileRelocationCheck;
       host-separated-measurement-identity = plotOutputs.hostMeasurementIdentityCheck;
+      multi-host-evaluation-plot-workflow = plotOutputs.multiHostEvaluationPlotWorkflowCheck;
       exclusive-and-end-to-end-timing-accounting = plotOutputs.timingAccountingCheck;
       application-trend-ratio-normalization = plotOutputs.applicationTrendRatiosCheck;
       nix-plot-font-discovery = plotOutputs.fontDiscoveryCheck;

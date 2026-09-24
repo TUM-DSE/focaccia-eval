@@ -58,6 +58,7 @@ REPRODUCER_SIZE_SCHEMA = "focaccia-reproducer-size-evidence-v1"
 NATIVE_METADATA_SCHEMA = "focaccia-native-evaluation-v2"
 EMULATED_METADATA_SCHEMA = "focaccia-emulated-evaluation-v1"
 ACCOUNTING_NAME = "timing-accounting.json"
+MULTI_HOST_SUMMARY_NAME = "multi-host-summary.json"
 FIGURE_NAMES = (
     "split-overhead-breakdown.pdf",
     "tracing-comparison.pdf",
@@ -643,7 +644,22 @@ def _verified_profile_rows(
     return allowed, profile_keys, profile_rows
 
 
-def load_measurements(root: Path, *, relocate_from: Path | None = None) -> Measurements:
+def evidence_systems(root: Path) -> list[str]:
+    """Return systems represented by structurally located evaluator results."""
+    paths = [
+        *root.glob("native/*/results.csv"),
+        *root.glob("emulated/qemu/*/results.csv"),
+        *root.glob("emulated/box64/*/results.csv"),
+    ]
+    return sorted({path.parent.name for path in paths})
+
+
+def load_measurements(
+    root: Path,
+    *,
+    relocate_from: Path | None = None,
+    system: str | None = None,
+) -> Measurements:
     if relocate_from is not None and (
         not relocate_from.is_absolute() or ".." in relocate_from.parts
     ):
@@ -654,6 +670,8 @@ def load_measurements(root: Path, *, relocate_from: Path | None = None) -> Measu
         *sorted((root / "emulated" / "qemu").glob("*/results.csv")),
         *sorted((root / "emulated" / "box64").glob("*/results.csv")),
     ]
+    if system is not None:
+        paths = [path for path in paths if path.parent.name == system]
     if not paths:
         _warn(f"no evaluator results found under {root}")
         return Measurements([])
@@ -1443,22 +1461,14 @@ def make_argparser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    parser = make_argparser()
-    args = parser.parse_args()
-    if args.relocate_from is not None and (
-        not args.relocate_from.is_absolute() or ".." in args.relocate_from.parts
-    ):
-        parser.error("--relocate-from must be an absolute run root without '..'")
-    try:
-        measurements = load_measurements(args.input, relocate_from=args.relocate_from)
-    except ValueError as error:
-        parser.error(str(error))
-    output = args.output or args.input / "figures"
+def _generate_figures(
+    measurements: Measurements,
+    output: Path,
+    reproducer_sizes: dict[str, tuple[float, float]],
+) -> list[Path]:
     output.mkdir(parents=True, exist_ok=True)
     for name in (*FIGURE_NAMES, ACCOUNTING_NAME):
         (output / name).unlink(missing_ok=True)
-    _configure_matplotlib()
     generated = [
         figure
         for figure in (
@@ -1466,12 +1476,57 @@ def main() -> int:
             plot_full_curl(measurements, output),
             plot_selective_applications(measurements, output),
             plot_application_trends(measurements, output),
-            plot_reproducer_sizes(load_reproducer_sizes(args.reproducer_sizes), output),
+            plot_reproducer_sizes(reproducer_sizes, output),
             plot_combined_bug_study(output),
         )
         if figure is not None
     ]
     generated.append(write_timing_accounting(measurements, output))
+    return generated
+
+
+def main() -> int:
+    parser = make_argparser()
+    args = parser.parse_args()
+    if args.relocate_from is not None and (
+        not args.relocate_from.is_absolute() or ".." in args.relocate_from.parts
+    ):
+        parser.error("--relocate-from must be an absolute run root without '..'")
+    output = args.output or args.input / "figures"
+    systems = evidence_systems(args.input)
+    _configure_matplotlib()
+    sizes = load_reproducer_sizes(args.reproducer_sizes)
+    try:
+        measurements = load_measurements(args.input, relocate_from=args.relocate_from)
+    except ValueError:
+        measurements = None
+    if measurements is not None:
+        generated = _generate_figures(measurements, output, sizes)
+    elif len(systems) > 1:
+        generated = []
+        summary: dict[str, list[str]] = {}
+        output.mkdir(parents=True, exist_ok=True)
+        for name in (*FIGURE_NAMES, ACCOUNTING_NAME):
+            (output / name).unlink(missing_ok=True)
+        for system in systems:
+            measurements = load_measurements(
+                args.input, relocate_from=args.relocate_from, system=system
+            )
+            host_generated = _generate_figures(measurements, output / system, sizes)
+            generated.extend(host_generated)
+            summary[system] = [path.name for path in host_generated]
+        summary_path = output / MULTI_HOST_SUMMARY_NAME
+        summary_path.write_text(
+            json.dumps(
+                {"schema": "focaccia-multi-host-plot-summary-v1", "hosts": summary},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        generated.append(summary_path)
+    else:
+        parser.error("ambiguous measurement systems cannot be separated")
     for figure in generated:
         print(figure)
     return 0

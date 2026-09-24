@@ -145,6 +145,21 @@ let
       python -m unittest -v test_plots.HostMeasurementIdentityTests
       touch "$out"
     '';
+  multiHostEvaluationPlotWorkflowCheck =
+    pkgs.runCommand "multi-host-evaluation-plot-workflow"
+      { nativeBuildInputs = [ python pkgs.ruff ]; }
+      ''
+        export HOME="$TMPDIR"
+        export MPLBACKEND=Agg
+        cp ${../evaluation/plots.py} plots.py
+        cp ${../evaluation/test_plots.py} test_plots.py
+        cp ${../evaluation/evaluation.py} evaluation.py
+        ruff check plots.py test_plots.py
+        ruff format --check plots.py test_plots.py
+        python -m unittest -v \
+          test_plots.HostMeasurementIdentityTests.test_cli_separates_multi_host_figures_and_measurements
+        touch "$out"
+      '';
   package =
     pkgs.runCommand "focaccia-evaluation-plots"
       {
@@ -221,6 +236,7 @@ in
     sizeMeasurementCheck
     profileRelocationCheck
     hostMeasurementIdentityCheck
+    multiHostEvaluationPlotWorkflowCheck
     timingAccountingCheck
     selectiveApplicationAcceptanceCheck
     wholeRunExperimentExecutionCheck
