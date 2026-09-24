@@ -542,7 +542,15 @@ let
     assert
       system != "x86_64-linux"
       || qemuCaseEvaluationData."qemu-1861404".emulatorCases."qemu-1861404".qemuCpuModel == "max";
-    pkgs.runCommand "historical-qemu-avx-cpu-model" { } ''
+    pkgs.runCommand "historical-qemu-avx-cpu-model" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir evaluation
+      cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+      cp ${../evaluation/test_evaluation.py} evaluation/test_evaluation.py
+      (
+        cd evaluation
+        python -m unittest -v \
+          test_evaluation.EvaluationTests.test_validator_cpu_model_is_only_forwarded_for_aarch64
+      )
       touch "$out"
     '';
   terminalValidationCutpointCheck =

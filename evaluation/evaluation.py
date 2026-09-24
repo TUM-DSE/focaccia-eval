@@ -2977,11 +2977,7 @@ def _evaluate_qemu_trigger(
                         else ()
                     ),
                     *(("--skip-unmatched",) if skip_unmatched else ()),
-                    *(
-                        ("--qemu-aarch64-cpu-model", case.qemu_cpu_model)
-                        if case.qemu_cpu_model is not None
-                        else ()
-                    ),
+                    *_validator_cpu_model_args(case),
                 )
             )
     except EvaluationError as error:
@@ -3651,6 +3647,12 @@ def _evaluate_log_trigger(
         }
     )
     return rows, metadata, passed
+
+
+def _validator_cpu_model_args(case: EmulatorCase) -> tuple[str, ...]:
+    if case.qemu_cpu_model is not None and case.guest_system == "aarch64-linux":
+        return ("--qemu-aarch64-cpu-model", case.qemu_cpu_model)
+    return ()
 
 
 def run_emulated(

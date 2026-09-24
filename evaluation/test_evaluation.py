@@ -17,6 +17,25 @@ import evaluation
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_validator_cpu_model_is_only_forwarded_for_aarch64(self):
+        common = {
+            "identifier": "qemu-test",
+            "kind": "trigger",
+            "trigger": "test",
+            "emulator": "qemu-test",
+            "program": "bin/qemu",
+            "expected_validation": "mismatch",
+            "qemu_cpu_model": "max",
+        }
+        x86 = evaluation.EmulatorCase(guest_system="x86_64-linux", **common)
+        aarch64 = evaluation.EmulatorCase(guest_system="aarch64-linux", **common)
+
+        self.assertEqual(evaluation._validator_cpu_model_args(x86), ())
+        self.assertEqual(
+            evaluation._validator_cpu_model_args(aarch64),
+            ("--qemu-aarch64-cpu-model", "max"),
+        )
+
     def test_machine_names_are_normalized(self):
         self.assertEqual(evaluation.normalize_machine("AMD64"), "x86_64")
         self.assertEqual(evaluation.normalize_machine("arm64"), "aarch64")
