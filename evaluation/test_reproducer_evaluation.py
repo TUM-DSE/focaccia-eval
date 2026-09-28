@@ -377,6 +377,23 @@ class ReproducerEvaluationTests(unittest.TestCase):
         )
         self.assertEqual(contract.source, 0x402000)
 
+    def test_mismatch_contract_accepts_relocated_memory_subject_at_exact_source(self):
+        report = self._report(
+            status="mismatch",
+            errors=[self._confirmed("memory-content-mismatch", "0x4000800c40")],
+        )
+
+        contract = evaluation.select_mismatch_contract(
+            report,
+            evaluation.ErrorSignature("memory-content-mismatch", "*"),
+            source_address=0x401000,
+        )
+
+        self.assertEqual(
+            contract.signatures,
+            (evaluation.ErrorSignature("memory-content-mismatch", "0x4000800c40"),),
+        )
+
     def test_buggy_and_reference_reports_require_same_one_transition_contract(self):
         errors = [
             self._confirmed("register-content-mismatch", "RAX"),

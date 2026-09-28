@@ -513,7 +513,10 @@ def select_mismatch_contract(
             continue
         source, destination = transition_range
         signatures = _confirmed_signatures(entry)
-        if primary not in signatures:
+        if primary.subject == "*":
+            if not any(signature.code == primary.code for signature in signatures):
+                continue
+        elif primary not in signatures:
             continue
         if source_address is not None and source != source_address:
             continue

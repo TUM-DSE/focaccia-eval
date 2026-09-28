@@ -493,7 +493,9 @@ let
       referenceOutcome = "partial-zmm0";
       primaryError = {
         code = "memory-content-mismatch";
-        subject = "0x40007fcc20";
+        # Linux-user stack addresses vary between executions. The source
+        # symbol identifies the transition; accept its observed memory subject.
+        subject = "*";
       };
       sourceSymbol = "focaccia_trace_start";
     };
@@ -971,6 +973,18 @@ in
           ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
             -m unittest -v \
             test_reproducer_evaluation.ReproducerEvaluationTests.test_configured_reference_outcomes_are_exact_and_reject_unrelated_mismatches
+          touch "$out"
+        '';
+      reproducer-relocated-memory-subject = pkgs.runCommand
+        "reproducer-relocated-memory-subject" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v \
+            test_reproducer_evaluation.ReproducerEvaluationTests.test_mismatch_contract_accepts_relocated_memory_subject_at_exact_source
           touch "$out"
         '';
       diagnostic-reproducer-source-admission = pkgs.runCommand
