@@ -1019,6 +1019,20 @@ def evaluate_case(
         )
         entry_prefix = EntryPrefix(prefix_fragment.start, prefix_fragment.data)
 
+    if case.reference_outcome == "partial-zmm0":
+        validation_inputs = tuple(transform.get_validation_input_registers())
+        if "ZMM0" not in validation_inputs:
+            raise ReproducerEvaluationError(
+                "Partial ZMM0 case no longer exposes the expected unavailable upper input."
+            )
+        # Only YMM0 is a declared validation output for this AVX fragment. Its
+        # composed ZMM equation retains the unchanged upper half, but that half
+        # neither affects YMM0 nor the memory write being reproduced. Preserve
+        # the explicit ZMM output diagnostic without inventing its input bits.
+        transform.get_validation_input_registers = lambda: [
+            register for register in validation_inputs if register != "ZMM0"
+        ]
+
     reproducer = Reproducer(
         str(artifacts.binary),
         [],
