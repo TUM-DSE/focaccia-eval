@@ -497,6 +497,10 @@ let
         # symbol identifies the transition; accept its observed memory subject.
         subject = "*";
       };
+      # The two-instruction fragment overwrites YMM0 before reading it. Restore
+      # only its concrete address inputs; ZMM0's unchanged upper half remains
+      # explicitly unavailable and is checked by the partial reference outcome.
+      requiredRegisters = [ "RAX" "RDX" ];
       sourceSymbol = "focaccia_trace_start";
     };
     "1832422" = {
