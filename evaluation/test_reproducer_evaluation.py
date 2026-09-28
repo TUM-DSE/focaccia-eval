@@ -226,6 +226,7 @@ class ReproducerEvaluationTests(unittest.TestCase):
                 primary_error=evaluation.ErrorSignature(
                     "register-content-mismatch", "RAX"
                 ),
+                mismatch_selection="unique",
                 source_symbol=None,
                 entry_prefix_symbol=None,
                 required_registers=(),
@@ -443,6 +444,33 @@ class ReproducerEvaluationTests(unittest.TestCase):
             evaluation.ReproducerEvaluationError, "exactly one complete transition"
         ):
             evaluation.require_reference_acceptance(incomplete_reference)
+
+    def test_earliest_mismatch_selection_avoids_cascaded_corrupt_context(self):
+        primary = evaluation.ErrorSignature("memory-content-mismatch", "*")
+        report = {
+            "validation": {
+                "entries": [
+                    {
+                        "transition_range": [0x40106A, 0x401072],
+                        "errors": [self._confirmed("memory-content-mismatch", "0x2000")],
+                    },
+                    {
+                        "transition_range": [0x401052, 0x401060],
+                        "errors": [self._confirmed("memory-content-mismatch", "0x1000")],
+                    },
+                ]
+            }
+        }
+
+        selected = evaluation.select_mismatch_contract(
+            report, primary, selection="earliest"
+        )
+
+        self.assertEqual(selected.transition_range, (0x401052, 0x401060))
+        with self.assertRaisesRegex(
+            evaluation.ReproducerEvaluationError, "found 2"
+        ):
+            evaluation.select_mismatch_contract(report, primary)
 
     def test_retained_buggy_status_is_copied_from_raw_report(self):
         self.assertEqual(

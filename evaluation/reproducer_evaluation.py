@@ -87,6 +87,7 @@ class CaseConfig:
     reference_program: Path | None
     reference_outcome: str
     primary_error: ErrorSignature
+    mismatch_selection: str
     source_symbol: str | None
     entry_prefix_symbol: str | None
     required_registers: tuple[str, ...]
@@ -194,6 +195,7 @@ def load_config(path: Path) -> Config:
                 "Reproducer config contains a malformed case."
             )
         source_symbol = encoded.get("sourceSymbol")
+        mismatch_selection = encoded.get("mismatchSelection", "unique")
         entry_prefix_symbol = encoded.get("entryPrefixSymbol")
         condition_code_seed = encoded.get("conditionCodeSeed")
         required_registers = encoded.get("requiredRegisters", [])
@@ -221,8 +223,14 @@ def load_config(path: Path) -> Config:
                     f"{context} native-oracle control cannot name referenceProgram."
                 )
             parsed_reference_program = None
+        if mismatch_selection not in {"unique", "earliest"}:
+            raise ReproducerEvaluationError(f"{context} has invalid mismatchSelection.")
         if source_symbol is not None and not isinstance(source_symbol, str):
             raise ReproducerEvaluationError(f"{context} has invalid sourceSymbol.")
+        if mismatch_selection != "unique" and source_symbol is not None:
+            raise ReproducerEvaluationError(
+                f"{context} cannot combine mismatchSelection with sourceSymbol."
+            )
         if entry_prefix_symbol is not None and not isinstance(entry_prefix_symbol, str):
             raise ReproducerEvaluationError(f"{context} has invalid entryPrefixSymbol.")
         if (
@@ -260,6 +268,7 @@ def load_config(path: Path) -> Config:
                 primary_error=_parse_error_signature(
                     encoded.get("primaryError"), f"{context} primaryError"
                 ),
+                mismatch_selection=mismatch_selection,
                 source_symbol=source_symbol,
                 entry_prefix_symbol=entry_prefix_symbol,
                 required_registers=tuple(required_registers),
@@ -498,6 +507,7 @@ def select_mismatch_contract(
     primary: ErrorSignature,
     *,
     source_address: int | None = None,
+    selection: str = "unique",
 ) -> MismatchContract:
     validation = report.get("validation")
     entries = validation.get("entries") if isinstance(validation, dict) else None
@@ -529,6 +539,14 @@ def select_mismatch_contract(
             continue
         contracts.add(MismatchContract(source, destination, signatures))
 
+    if selection == "earliest" and contracts:
+        # A later mismatch can be downstream evidence produced from state that
+        # the buggy emulator has already corrupted.  Reproducer context must
+        # therefore come from the first confirmed matching transition, not a
+        # convenient later marker inside the witness.
+        return min(contracts, key=lambda contract: contract.transition_range)
+    if selection != "unique":
+        raise ReproducerEvaluationError(f"Unsupported mismatch selection {selection!r}.")
     if len(contracts) != 1:
         raise ReproducerEvaluationError(
             "Expected one localized source mismatch contract for "
@@ -1015,6 +1033,7 @@ def evaluate_case(
         source_report,
         case.primary_error,
         source_address=expected_source,
+        selection=case.mismatch_selection,
     )
     transform = (
         _load_diagnostic_transform(artifacts.oracle, contract)

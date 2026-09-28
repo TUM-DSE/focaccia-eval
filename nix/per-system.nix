@@ -498,11 +498,11 @@ let
         # symbol identifies the transition; accept its observed memory subject.
         subject = "*";
       };
-      # The two-instruction fragment overwrites YMM0 before reading it. Restore
-      # only its concrete address inputs; ZMM0's unchanged upper half remains
-      # explicitly unavailable and is checked by the partial reference outcome.
-      requiredRegisters = [ "RAX" "RDX" ];
-      sourceSymbol = "focaccia_trace_start";
+      # Select the first confirmed target transition.  A compiler-generated
+      # AVX copy before focaccia_trace_start is where QEMU 4.2 first corrupts
+      # the 32-byte value; the later marker consumes that already-corrupted
+      # state and cannot be a genuine reproducer source boundary.
+      mismatchSelection = "earliest";
     };
     "1832422" = {
       sourceCase = "qemu-1832422";
@@ -978,6 +978,18 @@ in
           ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
             -m unittest -v \
             test_reproducer_evaluation.ReproducerEvaluationTests.test_configured_reference_outcomes_are_exact_and_reject_unrelated_mismatches
+          touch "$out"
+        '';
+      reproducer-earliest-confirmed-context = pkgs.runCommand
+        "reproducer-earliest-confirmed-context" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v \
+            test_reproducer_evaluation.ReproducerEvaluationTests.test_earliest_mismatch_selection_avoids_cascaded_corrupt_context
           touch "$out"
         '';
       reproducer-retained-raw-status = pkgs.runCommand
