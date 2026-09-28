@@ -329,6 +329,25 @@ class ReproducerEvaluationTests(unittest.TestCase):
 
         self.assertEqual(selected.range, (0x3000, 0x3001))
 
+    def test_messagepack_extraction_composes_native_instructions_to_cutpoint(self):
+        arch = x86.ArchX86()
+        transforms = (
+            SymbolicTransform(0, {}, [], arch, 0x3000, 0x3004),
+            SymbolicTransform(0, {}, [], arch, 0x3004, 0x3008),
+        )
+        trace = MaterializedTrace(
+            transforms,
+            TraceEnvironment(None, (), (), binary_hash=None, architecture=arch.key),
+            (0x3000, 0x3004),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oracle.trace"
+            serialize_transformations(trace, path, "msgpack")
+            contract = evaluation.MismatchContract(0x3000, 0x3008, ())
+            selected = evaluation._load_transform(path, "msgpack", contract)
+
+        self.assertEqual(selected.range, (0x3000, 0x3008))
+
     def test_mismatch_contract_retains_every_confirmed_error_on_transition(self):
         report = self._report(
             status="mismatch",

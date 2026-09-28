@@ -987,6 +987,18 @@ in
             test_reproducer_evaluation.ReproducerEvaluationTests.test_mismatch_contract_accepts_relocated_memory_subject_at_exact_source
           touch "$out"
         '';
+      reproducer-cutpoint-transform-composition = pkgs.runCommand
+        "reproducer-cutpoint-transform-composition" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v \
+            test_reproducer_evaluation.ReproducerEvaluationTests.test_messagepack_extraction_composes_native_instructions_to_cutpoint
+          touch "$out"
+        '';
       diagnostic-reproducer-source-admission = pkgs.runCommand
         "diagnostic-reproducer-source-admission" { } ''
           mkdir evaluation

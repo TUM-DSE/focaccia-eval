@@ -645,12 +645,14 @@ def _load_transform(
             if isinstance(item, SymbolicTransform) and item.addr == contract.source
         ]
     matches = [item for item in candidates if item.range == contract.transition_range]
-    if len(matches) != 1:
-        raise ReproducerEvaluationError(
-            f"Oracle contains {len(matches)} symbolic transforms for "
-            f"{contract.source:#x}->{contract.destination:#x}."
-        )
-    return matches[0]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches and trace_format == "msgpack":
+        return _load_diagnostic_transform(path, contract)
+    raise ReproducerEvaluationError(
+        f"Oracle contains {len(matches)} symbolic transforms for "
+        f"{contract.source:#x}->{contract.destination:#x}."
+    )
 
 
 def _load_diagnostic_transform(path: Path, contract: MismatchContract) -> SymbolicTransform:
