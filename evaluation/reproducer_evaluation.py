@@ -830,7 +830,10 @@ def retained_validation_status(report: dict[str, Any]) -> str:
 
 
 def require_buggy_reproduction(
-    report: dict[str, Any], contract: MismatchContract
+    report: dict[str, Any],
+    contract: MismatchContract,
+    *,
+    allow_unavailable_zmm_output: bool = False,
 ) -> None:
     if report.get("status") != "mismatch":
         raise ReproducerEvaluationError(
@@ -865,15 +868,34 @@ def require_buggy_reproduction(
                 "Generated crash reproducer lacks the expected signal and fault PC."
             )
     else:
-        common._require_complete_terminal_trace(report)
         trace = report.get("trace")
-        if not isinstance(trace, dict) or (
-            trace.get("state_count"),
-            trace.get("transform_count"),
-        ) != (2, 1):
-            raise ReproducerEvaluationError(
-                "Generated mismatch trace is not exactly one complete transition."
-            )
+        if allow_unavailable_zmm_output:
+            diagnostics = report.get("validation", {}).get("diagnostics", [])
+            incomplete = [
+                item for item in diagnostics
+                if isinstance(item, dict) and item.get("level") == "incomplete"
+            ]
+            if (
+                not isinstance(trace, dict)
+                or (trace.get("state_count"), trace.get("transform_count"),
+                    trace.get("terminal_reached"), trace.get("complete"))
+                != (2, 1, True, False)
+                or len(incomplete) != 1
+                or incomplete[0].get("code") != "snapshot-register-unavailable"
+                or "ZMM0" not in str(incomplete[0].get("message", ""))
+            ):
+                raise ReproducerEvaluationError(
+                    "Generated mismatch has incompleteness beyond the unavailable ZMM0 output."
+                )
+        else:
+            common._require_complete_terminal_trace(report)
+            if not isinstance(trace, dict) or (
+                trace.get("state_count"),
+                trace.get("transform_count"),
+            ) != (2, 1):
+                raise ReproducerEvaluationError(
+                    "Generated mismatch trace is not exactly one complete transition."
+                )
 
 
 def require_reference_acceptance(report: dict[str, Any]) -> None:
@@ -1136,7 +1158,11 @@ def evaluate_case(
         cpu_model=case.qemu_cpu_model,
     )
     if diagnostic_adapter is None:
-        require_buggy_reproduction(buggy_report, contract)
+        require_buggy_reproduction(
+            buggy_report,
+            contract,
+            allow_unavailable_zmm_output=case.reference_outcome == "partial-zmm0",
+        )
     else:
         require_exact_vector_mismatch(
             buggy_report, artifacts.metadata["diagnosticAdapter"]["consumer"]["confirmedTarget"]
