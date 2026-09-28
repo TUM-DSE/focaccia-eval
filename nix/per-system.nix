@@ -980,6 +980,18 @@ in
             test_reproducer_evaluation.ReproducerEvaluationTests.test_configured_reference_outcomes_are_exact_and_reject_unrelated_mismatches
           touch "$out"
         '';
+      reproducer-retained-raw-status = pkgs.runCommand
+        "reproducer-retained-raw-status" { } ''
+          mkdir evaluation
+          cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+          cp ${../evaluation/reproducer_evaluation.py} evaluation/reproducer_evaluation.py
+          cp ${../evaluation/test_reproducer_evaluation.py} evaluation/test_reproducer_evaluation.py
+          cd evaluation
+          ${focaccia.packages.${system}.focaccia}/bin/python3.12 \
+            -m unittest -v \
+            test_reproducer_evaluation.ReproducerEvaluationTests.test_retained_buggy_status_is_copied_from_raw_report
+          touch "$out"
+        '';
       reproducer-relocated-memory-subject = pkgs.runCommand
         "reproducer-relocated-memory-subject" { } ''
           mkdir evaluation

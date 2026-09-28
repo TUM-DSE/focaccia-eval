@@ -444,6 +444,16 @@ class ReproducerEvaluationTests(unittest.TestCase):
         ):
             evaluation.require_reference_acceptance(incomplete_reference)
 
+    def test_retained_buggy_status_is_copied_from_raw_report(self):
+        self.assertEqual(
+            evaluation.retained_validation_status({"status": "incomplete"}),
+            "incomplete",
+        )
+        with self.assertRaisesRegex(
+            evaluation.ReproducerEvaluationError, "no status"
+        ):
+            evaluation.retained_validation_status({})
+
     def test_configured_reference_outcomes_are_exact_and_reject_unrelated_mismatches(self):
         contract = evaluation.MismatchContract(
             0x401000,

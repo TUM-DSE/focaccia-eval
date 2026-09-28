@@ -803,6 +803,14 @@ def _run_validation(
     return report
 
 
+def retained_validation_status(report: dict[str, Any]) -> str:
+    """Return the validator's actual status for retained provenance."""
+    status = report.get("status")
+    if not isinstance(status, str) or not status:
+        raise ReproducerEvaluationError("Validation report has no status.")
+    return status
+
+
 def require_buggy_reproduction(
     report: dict[str, Any], contract: MismatchContract
 ) -> None:
@@ -1112,9 +1120,7 @@ def evaluate_case(
         validation_root / "buggy",
         cpu_model=case.qemu_cpu_model,
     )
-    if diagnostic_adapter is None and case.reference_outcome == "partial-zmm0":
-        require_partial_zmm0_reference(buggy_report, contract)
-    elif diagnostic_adapter is None:
+    if diagnostic_adapter is None:
         require_buggy_reproduction(buggy_report, contract)
     else:
         require_exact_vector_mismatch(
@@ -1203,7 +1209,7 @@ def evaluate_case(
         "status": (
             "diagnostic-target-reproduced" if diagnostic_adapter
             else "detected-reference-shared" if case.reference_outcome == "shared-mismatch"
-            else "partial-unconfirmed" if case.reference_outcome == "partial-zmm0"
+            else "detected-reference-partial" if case.reference_outcome == "partial-zmm0"
             else "passed"
         ),
         "admission": "diagnostic-target-only" if diagnostic_adapter else "passed-source",
@@ -1223,7 +1229,7 @@ def evaluate_case(
             "reportSha256": common._sha256(
                 validation_root / "buggy" / "validation.json"
             ),
-            "status": "mismatch",
+            "status": retained_validation_status(buggy_report),
         },
         "reference": reference_document,
     }
