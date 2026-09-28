@@ -506,15 +506,10 @@ class ReproducerEvaluationTests(unittest.TestCase):
                 "level": "incomplete",
                 "message": "Unable to observe register ZMM0",
             },
-            {
-                "code": "snapshot-register-unavailable",
-                "level": "incomplete",
-                "message": "Unable to observe register YMM0",
-            },
         ]
         partial["validation"]["entries"][0]["errors"] = [{
             "severity": "incomplete",
-            "message": "Value of register YMM0 is unavailable",
+            "message": "Value of register ZMM0 is unavailable",
         }]
         evaluation.require_partial_zmm0_reference(partial, partial_contract)
         partial["validation"]["entries"][0]["errors"].append(
