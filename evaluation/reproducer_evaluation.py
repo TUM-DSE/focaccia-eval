@@ -963,10 +963,7 @@ def require_partial_zmm0_reference(
         if isinstance(item, dict)
         and item.get("code") == "snapshot-register-unavailable"
         and item.get("level") == "incomplete"
-        and any(
-            register in str(item.get("message", ""))
-            for register in ("ZMM0", "YMM0")
-        )
+        and "ZMM0" in str(item.get("message", ""))
     ]
     exact_entries = [
         entry for entry in entries
@@ -975,20 +972,11 @@ def require_partial_zmm0_reference(
         and any(
             isinstance(error, dict)
             and error.get("severity") == "incomplete"
-            and any(
-                register in str(error.get("message", ""))
-                for register in ("ZMM0", "YMM0")
-            )
+            and "ZMM0" in str(error.get("message", ""))
             for error in entry.get("errors", ())
         )
     ]
-    unavailable_registers = {
-        register
-        for item in unavailable
-        for register in ("ZMM0", "YMM0")
-        if register in str(item.get("message", ""))
-    }
-    if confirmed or unavailable_registers != {"ZMM0", "YMM0"} or len(exact_entries) != 1:
+    if confirmed or len(unavailable) != 1 or len(exact_entries) != 1:
         raise ReproducerEvaluationError(
             "Partial reference is not the configured ZMM0-unavailable outcome."
         )
