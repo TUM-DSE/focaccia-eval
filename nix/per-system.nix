@@ -491,6 +491,7 @@ let
       referenceVersion = qemuReproducerReferenceVersion;
       referenceProgram = "${qemuReproducerReference}/bin/qemu-x86_64";
       referenceOutcome = "partial-zmm0";
+      qemuCpuModel = "max";
       primaryError = {
         code = "memory-content-mismatch";
         # Linux-user stack addresses vary between executions. The source

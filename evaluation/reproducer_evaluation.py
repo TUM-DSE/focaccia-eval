@@ -91,6 +91,7 @@ class CaseConfig:
     entry_prefix_symbol: str | None
     required_registers: tuple[str, ...]
     condition_code_seed: int | None
+    qemu_cpu_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +197,7 @@ def load_config(path: Path) -> Config:
         entry_prefix_symbol = encoded.get("entryPrefixSymbol")
         condition_code_seed = encoded.get("conditionCodeSeed")
         required_registers = encoded.get("requiredRegisters", [])
+        qemu_cpu_model = encoded.get("qemuCpuModel")
         reference_kind = encoded.get("referenceKind", "qemu")
         if reference_kind not in {"qemu", "native-oracle"}:
             raise ReproducerEvaluationError(f"{context} has invalid referenceKind.")
@@ -229,6 +231,10 @@ def load_config(path: Path) -> Config:
             or len(set(required_registers)) != len(required_registers)
         ):
             raise ReproducerEvaluationError(f"{context} has invalid requiredRegisters.")
+        if qemu_cpu_model is not None and (
+            not isinstance(qemu_cpu_model, str) or not qemu_cpu_model
+        ):
+            raise ReproducerEvaluationError(f"{context} has invalid qemuCpuModel.")
         if condition_code_seed is not None and (
             not isinstance(condition_code_seed, int)
             or isinstance(condition_code_seed, bool)
@@ -258,6 +264,7 @@ def load_config(path: Path) -> Config:
                 entry_prefix_symbol=entry_prefix_symbol,
                 required_registers=tuple(required_registers),
                 condition_code_seed=condition_code_seed,
+                qemu_cpu_model=qemu_cpu_model,
             )
         )
 
@@ -738,6 +745,8 @@ def _run_validation(
     binary: Path,
     oracle: Path,
     output: Path,
+    *,
+    cpu_model: str | None = None,
 ) -> dict[str, Any]:
     output.mkdir(parents=True)
     qemu_log = output / "qemu.log"
@@ -745,8 +754,12 @@ def _run_validation(
     report_path = output / "validation.json"
     states_path = output / "states.trace"
     port = common._free_loopback_port()
+    qemu_command = [str(program)]
+    if cpu_model is not None:
+        qemu_command.extend(("-cpu", cpu_model))
+    qemu_command.extend(("-g", str(port), str(binary)))
     qemu = common.ManagedProcess(
-        (str(program), "-g", str(port), str(binary)),
+        tuple(qemu_command),
         qemu_log,
         cwd=output,
     )
@@ -1085,6 +1098,7 @@ def evaluate_case(
         binary,
         oracle,
         validation_root / "buggy",
+        cpu_model=case.qemu_cpu_model,
     )
     if diagnostic_adapter is None:
         require_buggy_reproduction(buggy_report, contract)
@@ -1105,6 +1119,7 @@ def evaluate_case(
             binary,
             oracle,
             validation_root / "reference",
+            cpu_model=case.qemu_cpu_model,
         )
         if case.reference_outcome == "accepted":
             require_reference_acceptance(reference_report)
