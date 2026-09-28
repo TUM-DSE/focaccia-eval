@@ -462,14 +462,21 @@ class ReproducerEvaluationTests(unittest.TestCase):
         partial_contract = evaluation.MismatchContract(0x401000, 0x401005, ())
         partial = self._report(status="incomplete")
         partial["trace"]["complete"] = False
-        partial["validation"]["diagnostics"] = [{
-            "code": "snapshot-register-unavailable",
-            "level": "incomplete",
-            "message": "Unable to observe register ZMM0",
-        }]
+        partial["validation"]["diagnostics"] = [
+            {
+                "code": "snapshot-register-unavailable",
+                "level": "incomplete",
+                "message": "Unable to observe register ZMM0",
+            },
+            {
+                "code": "snapshot-register-unavailable",
+                "level": "incomplete",
+                "message": "Unable to observe register YMM0",
+            },
+        ]
         partial["validation"]["entries"][0]["errors"] = [{
             "severity": "incomplete",
-            "message": "Value of register ZMM0 is unavailable",
+            "message": "Value of register YMM0 is unavailable",
         }]
         evaluation.require_partial_zmm0_reference(partial, partial_contract)
         partial["validation"]["entries"][0]["errors"].append(

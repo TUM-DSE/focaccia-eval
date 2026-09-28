@@ -915,7 +915,10 @@ def require_partial_zmm0_reference(
         if isinstance(item, dict)
         and item.get("code") == "snapshot-register-unavailable"
         and item.get("level") == "incomplete"
-        and "ZMM0" in str(item.get("message", ""))
+        and any(
+            register in str(item.get("message", ""))
+            for register in ("ZMM0", "YMM0")
+        )
     ]
     exact_entries = [
         entry for entry in entries
@@ -924,11 +927,20 @@ def require_partial_zmm0_reference(
         and any(
             isinstance(error, dict)
             and error.get("severity") == "incomplete"
-            and "ZMM0" in str(error.get("message", ""))
+            and any(
+                register in str(error.get("message", ""))
+                for register in ("ZMM0", "YMM0")
+            )
             for error in entry.get("errors", ())
         )
     ]
-    if confirmed or len(unavailable) != 1 or len(exact_entries) != 1:
+    unavailable_registers = {
+        register
+        for item in unavailable
+        for register in ("ZMM0", "YMM0")
+        if register in str(item.get("message", ""))
+    }
+    if confirmed or unavailable_registers != {"ZMM0", "YMM0"} or len(exact_entries) != 1:
         raise ReproducerEvaluationError(
             "Partial reference is not the configured ZMM0-unavailable outcome."
         )
@@ -1100,7 +1112,9 @@ def evaluate_case(
         validation_root / "buggy",
         cpu_model=case.qemu_cpu_model,
     )
-    if diagnostic_adapter is None:
+    if diagnostic_adapter is None and case.reference_outcome == "partial-zmm0":
+        require_partial_zmm0_reference(buggy_report, contract)
+    elif diagnostic_adapter is None:
         require_buggy_reproduction(buggy_report, contract)
     else:
         require_exact_vector_mismatch(
@@ -1189,7 +1203,7 @@ def evaluate_case(
         "status": (
             "diagnostic-target-reproduced" if diagnostic_adapter
             else "detected-reference-shared" if case.reference_outcome == "shared-mismatch"
-            else "detected-reference-partial" if case.reference_outcome == "partial-zmm0"
+            else "partial-unconfirmed" if case.reference_outcome == "partial-zmm0"
             else "passed"
         ),
         "admission": "diagnostic-target-only" if diagnostic_adapter else "passed-source",
