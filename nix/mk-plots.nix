@@ -9,6 +9,17 @@ let
   fontsConf = pkgs.makeFontsConf {
     fontDirectories = [ pkgs.libertine ];
   };
+  x86PlotGuestCompiler = pkgs.pkgsCross.gnu64.stdenv.cc;
+  x86PlotGuest = pkgs.runCommand "focaccia-plot-full-curl-guest" { } ''
+    mkdir -p "$out/bin"
+    ${x86PlotGuestCompiler}/bin/${x86PlotGuestCompiler.targetPrefix}cc \
+      -nostdlib -no-pie -Wl,-e,_start -Wl,--build-id=none \
+      ${../evaluation/fixtures/plots/cross-isa-full-curl-guest.S} \
+      -o "$out/bin/application-curl-full-injected"
+    ${pkgs.binutils}/bin/nm "$out/bin/application-curl-full-injected" > symbols.txt
+    grep -Eq '[[:space:]][Tt][[:space:]]+focaccia_injection_curl_2175$' symbols.txt
+    grep -Eq '[[:space:]][Tt][[:space:]]+focaccia_trace_stop_curl$' symbols.txt
+  '';
   runner = pkgs.writeShellScriptBin "plot-evaluation" ''
     export FONTCONFIG_FILE=${fontsConf}
     export PATH=${pkgs.fontconfig}/bin:${pkgs.binutils}/bin:$PATH
@@ -157,6 +168,7 @@ let
         ruff check plots.py test_plots.py
         ruff format --check plots.py test_plots.py
         python -m unittest -v \
+          test_plots.HostMeasurementIdentityTests.test_cli_never_merges_disjoint_host_role_rows \
           test_plots.HostMeasurementIdentityTests.test_cli_separates_multi_host_figures_and_measurements
         touch "$out"
       '';
@@ -179,6 +191,7 @@ let
     pkgs.runCommand "focaccia-evaluation-plots"
       {
         nativeBuildInputs = [
+          pkgs.binutils
           pkgs.fontconfig
           python
         ];
@@ -194,24 +207,27 @@ let
         PY
         cp -R ${../evaluation/fixtures/plots} fixture
         chmod -R u+w fixture
+        ${python}/bin/python \
+          ${../evaluation/fixtures/plots/prepare_cross_isa_full_curl.py} \
+          fixture ${x86PlotGuest}/bin/application-curl-full-injected
         mkdir figures
         ${python}/bin/python ${../evaluation}/plots.py \
           --input fixture \
           --output figures \
           --reproducer-sizes fixture/reproducer-sizes.json
 
+        test -s figures/tracing-comparison.pdf
+        test -s figures/full-curl-role-pairing.json
+        test -s figures/multi-host-summary.json
+        test -s figures/aarch64-linux/combined-bug-study.pdf
+        test -s figures/x86_64-linux/combined-bug-study.pdf
         destination="$out/share/focaccia-evaluation/figures"
         mkdir -p "$destination"
-        for figure in \
-          split-overhead-breakdown.pdf \
-          tracing-comparison.pdf \
-          realworld-split-overhead-breakdown.pdf \
-          application-trend-ratios.pdf \
-          reproducer-code-size.pdf \
-          combined-bug-study.pdf
-        do
-          test -s "figures/$figure"
-          cp "figures/$figure" "$destination/"
+        cp figures/tracing-comparison.pdf figures/full-curl-role-pairing.json \
+          figures/multi-host-summary.json "$destination/"
+        for system in aarch64-linux x86_64-linux; do
+          mkdir -p "$destination/$system"
+          cp "figures/$system/combined-bug-study.pdf" "$destination/$system/"
         done
 
         printf 'corrupt\n' >> \

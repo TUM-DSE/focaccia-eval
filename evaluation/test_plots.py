@@ -853,6 +853,74 @@ class HostMeasurementIdentityTests(unittest.TestCase):
                 ):
                     plots.load_measurements(root)
 
+    def test_cli_never_merges_disjoint_host_role_rows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            native = root / "native/x86_64-linux"
+            qemu = root / "emulated/qemu/aarch64-linux"
+            native.mkdir(parents=True)
+            qemu.mkdir(parents=True)
+            (native / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "schema": plots.NATIVE_METADATA_SCHEMA,
+                        "role": "native",
+                        "system": "x86_64-linux",
+                        "status": "passed",
+                        "cases": {
+                            "1370": {
+                                "kind": "trigger",
+                                "status": "passed",
+                                "iterations": [],
+                            }
+                        },
+                    }
+                )
+            )
+            (qemu / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "schema": plots.EMULATED_METADATA_SCHEMA,
+                        "role": "qemu",
+                        "system": "aarch64-linux",
+                        "status": "passed",
+                        "cases": {
+                            "qemu-508": {
+                                "kind": "trigger",
+                                "benchmark": "508",
+                                "emulator": "qemu-test",
+                                "status": "passed",
+                                "iterations": [],
+                            }
+                        },
+                    }
+                )
+            )
+            with (native / "results.csv").open("w") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(
+                    ["benchmark", "mode", "component", "seconds", "iteration", "status"]
+                )
+                writer.writerow(["1370", "native", "execution", 1, 0, "passed"])
+            with (qemu / "results.csv").open("w") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(
+                    ["benchmark", "mode", "component", "seconds", "iteration", "status"]
+                )
+                writer.writerow(["508", "qemu-test", "execution", 2, 0, "passed"])
+
+            output = root / "figures"
+            with (
+                patch("sys.argv", ["plots", "--input", str(root)]),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                self.assertEqual(plots.main(), 0)
+            summary = json.loads((output / plots.MULTI_HOST_SUMMARY_NAME).read_text())
+            self.assertEqual(set(summary["hosts"]), {"x86_64-linux", "aarch64-linux"})
+            self.assertFalse((output / "split-overhead-breakdown.pdf").exists())
+            self.assertTrue((output / "x86_64-linux/combined-bug-study.pdf").is_file())
+            self.assertTrue((output / "aarch64-linux/combined-bug-study.pdf").is_file())
+
     def test_cli_separates_multi_host_figures_and_measurements(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

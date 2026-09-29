@@ -1889,7 +1889,11 @@ def main() -> int:
     _configure_matplotlib()
     sizes = load_reproducer_sizes(args.reproducer_sizes)
     try:
-        measurements = load_measurements(args.input, relocate_from=args.relocate_from)
+        measurements = (
+            load_measurements(args.input, relocate_from=args.relocate_from)
+            if len(systems) <= 1
+            else None
+        )
     except ValueError:
         measurements = None
     if measurements is not None:
