@@ -636,6 +636,27 @@ let
       python ${../evaluation/check_trigger_boundaries.py} ${config}
       touch "$out"
     '';
+  repeatedApplicationMismatchLocalizationCheck =
+    pkgs.runCommand "repeated-application-mismatch-localization"
+      {
+        nativeBuildInputs = [
+          pkgs.python3
+          pkgs.ruff
+        ];
+      }
+      ''
+        mkdir evaluation
+        cp ${../evaluation/evaluation.py} evaluation/evaluation.py
+        cp ${../evaluation/test_evaluation.py} evaluation/test_evaluation.py
+        (
+          cd evaluation
+          ruff check evaluation.py test_evaluation.py
+          ruff format --check evaluation.py test_evaluation.py
+          python -m unittest -v \
+            test_evaluation.EvaluationTests.test_repeated_application_injection_hits_require_only_exact_findings
+        )
+        touch "$out"
+      '';
   exactApplicationMismatchLocalizationCheck =
     pkgs.runCommand "exact-application-mismatch-localization"
       {
@@ -885,6 +906,7 @@ in
     historicalQemuAvxCpuModelCheck
     terminalValidationCutpointCheck
     unmatchedTransformSkippingCheck
+    repeatedApplicationMismatchLocalizationCheck
     exactApplicationMismatchLocalizationCheck
     exactTriggerMismatchLocalizationCheck
     triggerMismatchWitnessBoundariesCheck

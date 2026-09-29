@@ -1045,6 +1045,8 @@ class EvaluationTests(unittest.TestCase):
     def test_application_mismatch_requires_exact_localized_classification(self):
         expected = {
             "validation": {
+                "diagnostics": [],
+                "diagnostic_counts": {},
                 "entries": [
                     {
                         "transition_range": [0x43DD9C, 0x43DDA1],
@@ -1056,7 +1058,7 @@ class EvaluationTests(unittest.TestCase):
                             }
                         ],
                     }
-                ]
+                ],
             }
         }
 
@@ -1072,6 +1074,8 @@ class EvaluationTests(unittest.TestCase):
         )
         unrelated = {
             "validation": {
+                "diagnostics": [],
+                "diagnostic_counts": {},
                 "entries": [
                     {
                         "transition_range": [0x413F8D, 0x413F90],
@@ -1083,12 +1087,81 @@ class EvaluationTests(unittest.TestCase):
                             }
                         ],
                     }
-                ]
+                ],
             }
         }
         self.assertFalse(
             evaluation._expected_application_mismatch(
                 unrelated, 0x43DD9C, 0x43DDA1, "CF"
+            )
+        )
+
+    def test_repeated_application_injection_hits_require_only_exact_findings(self):
+        finding = {
+            "severity": "confirmed",
+            "code": "register-content-mismatch",
+            "subject": "CF",
+        }
+        repeated = {
+            "validation": {
+                "diagnostics": [],
+                "diagnostic_counts": {},
+                "severity_counts": {"confirmed": 2},
+                "entries": [
+                    {
+                        "transition_range": [0x43DD9C, 0x43DDA1],
+                        "errors": [dict(finding)],
+                    },
+                    {
+                        "transition_range": [0x43DD9C, 0x43DDA1],
+                        "errors": [dict(finding)],
+                    },
+                ],
+            }
+        }
+        self.assertTrue(
+            evaluation._only_expected_application_mismatches(
+                repeated, 0x43DD9C, 0x43DDA1, "CF"
+            )
+        )
+
+        for extra in (
+            {
+                "transition_range": [0x43DD9C, 0x43DDA1],
+                "errors": [
+                    {
+                        "severity": "confirmed",
+                        "code": "register-content-mismatch",
+                        "subject": "RAX",
+                    }
+                ],
+            },
+            {
+                "transition_range": [0x43DDA1, 0x43DDA2],
+                "errors": [dict(finding)],
+            },
+        ):
+            with self.subTest(extra=extra):
+                contaminated = {
+                    "validation": {
+                        **repeated["validation"],
+                        "entries": [*repeated["validation"]["entries"], extra],
+                    }
+                }
+                self.assertFalse(
+                    evaluation._only_expected_application_mismatches(
+                        contaminated, 0x43DD9C, 0x43DDA1, "CF"
+                    )
+                )
+        with_diagnostic = {
+            "validation": {
+                **repeated["validation"],
+                "diagnostics": ["incomplete evidence"],
+            }
+        }
+        self.assertFalse(
+            evaluation._only_expected_application_mismatches(
+                with_diagnostic, 0x43DD9C, 0x43DDA1, "CF"
             )
         )
 

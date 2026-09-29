@@ -2361,7 +2361,46 @@ def _expected_application_mismatch(
                 and error.get("subject") == subject
             ):
                 found += 1
-    return found == 1
+    return found > 0
+
+
+def _only_expected_application_mismatches(
+    report: dict[str, Any],
+    source_address: int,
+    stop_address: int,
+    subject: str,
+) -> bool:
+    """Require complete full-run findings to be only the nominated mismatch."""
+    validation = report.get("validation")
+    if not isinstance(validation, dict):
+        return False
+    entries = validation.get("entries")
+    if (
+        not isinstance(entries, list)
+        or validation.get("diagnostics") != []
+        or validation.get("diagnostic_counts") != {}
+    ):
+        return False
+    found = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("errors"), list):
+            return False
+        for error in entry["errors"]:
+            if (
+                entry.get("transition_range") != [source_address, stop_address]
+                or not isinstance(error, dict)
+                or error.get("severity") != "confirmed"
+                or error.get("code") != "register-content-mismatch"
+                or error.get("subject") != subject
+            ):
+                return False
+            found += 1
+    severity_counts = validation.get("severity_counts")
+    return (
+        found > 0
+        and isinstance(severity_counts, dict)
+        and severity_counts == {"confirmed": found}
+    )
 
 
 def require_selective_application_acceptance(
@@ -2678,11 +2717,20 @@ def _evaluate_qemu_application(
                 "expectedMismatchSubject": subject,
             }
         )
-        passed = _expected_application_mismatch(
-            report,
-            source_address,
-            stop_address,
-            subject,
+        passed = (
+            _only_expected_application_mismatches(
+                report,
+                source_address,
+                stop_address,
+                subject,
+            )
+            if case.trace_mode == "full"
+            else _expected_application_mismatch(
+                report,
+                source_address,
+                stop_address,
+                subject,
+            )
         )
         if not passed:
             localization_error = (

@@ -716,6 +716,7 @@ let
     historicalQemuAvxCpuModelCheck
     terminalValidationCutpointCheck
     unmatchedTransformSkippingCheck
+    repeatedApplicationMismatchLocalizationCheck
     exactApplicationMismatchLocalizationCheck
     exactTriggerMismatchLocalizationCheck
     triggerMismatchWitnessBoundariesCheck
@@ -1099,6 +1100,7 @@ in
       paper-emulator-guest-host-matrix = paperEmulatorMatrixCheck;
       opt-in-unmatched-transform-skipping = unmatchedTransformSkippingCheck;
       exact-application-mismatch-localization = exactApplicationMismatchLocalizationCheck;
+      repeated-application-mismatch-localization = repeatedApplicationMismatchLocalizationCheck;
       exact-trigger-mismatch-localization = exactTriggerMismatchLocalizationCheck;
       trigger-mismatch-witness-boundaries = triggerMismatchWitnessBoundariesCheck;
       reference-terminal-acceptance = referenceTerminalAcceptanceCheck;
