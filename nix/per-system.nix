@@ -1117,6 +1117,7 @@ in
       host-separated-measurement-identity = plotOutputs.hostMeasurementIdentityCheck;
       multi-host-evaluation-plot-workflow = plotOutputs.multiHostEvaluationPlotWorkflowCheck;
       cross-isa-full-curl-role-pairing = plotOutputs.crossIsaFullCurlRolePairingCheck;
+      cross-isa-selective-application-role-pairing = plotOutputs.crossIsaSelectiveApplicationRolePairingCheck;
       exclusive-and-end-to-end-timing-accounting = plotOutputs.timingAccountingCheck;
       application-trend-ratio-normalization = plotOutputs.applicationTrendRatiosCheck;
       nix-plot-font-discovery = plotOutputs.fontDiscoveryCheck;

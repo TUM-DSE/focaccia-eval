@@ -187,6 +187,42 @@ let
         python -m unittest -v test_plots.CrossIsaFullCurlPlotTests
         touch "$out"
       '';
+  crossIsaSelectiveApplicationRolePairingCheck =
+    pkgs.runCommand "cross-isa-selective-application-role-pairing"
+      {
+        nativeBuildInputs = [ python pkgs.binutils ];
+        FONTCONFIG_FILE = fontsConf;
+      }
+      ''
+        export HOME="$TMPDIR"
+        export MPLBACKEND=Agg
+        cp -R ${../evaluation/fixtures/plots} fixture
+        chmod -R u+w fixture
+        ${python}/bin/python \
+          ${../evaluation/fixtures/plots/prepare_cross_isa_full_curl.py} \
+          fixture ${x86PlotGuest}/bin/application-curl-full-injected
+        mkdir figures
+        ${python}/bin/python ${../evaluation}/plots.py \
+          --input fixture --output figures \
+          --reproducer-sizes fixture/reproducer-sizes.json
+        python - <<'PY'
+        import json
+        from pathlib import Path
+
+        pairing = json.loads(Path("figures/selective-application-role-pairing.json").read_text())
+        assert pairing["schema"] == "focaccia-cross-isa-selective-applications-role-pair-v1"
+        assert set(pairing["applications"]) == {"curl", "lua", "sqlite"}
+        for application, evidence in pairing["applications"].items():
+            assert evidence["emulator"] in {"qemu-8-2-0", "qemu-9-0-0", "qemu-6-1-0"}
+            assert len(evidence["iterations"]) == 1
+            iteration = evidence["iterations"][0]
+            for field in ("guestBinarySha256", "workloadSha256", "oracleSha256", "runManifestSha256", "validationReportSha256", "nativeProfileSha256", "qemuProfileSha256"):
+                assert len(iteration[field]) == 64, (application, field)
+        for name in ("realworld-split-overhead-breakdown.pdf", "application-trend-ratios.pdf"):
+            assert Path("figures", name).read_bytes().startswith(b"%PDF")
+        PY
+        touch "$out"
+      '';
   package =
     pkgs.runCommand "focaccia-evaluation-plots"
       {
@@ -269,6 +305,7 @@ in
     hostMeasurementIdentityCheck
     multiHostEvaluationPlotWorkflowCheck
     crossIsaFullCurlRolePairingCheck
+    crossIsaSelectiveApplicationRolePairingCheck
     timingAccountingCheck
     selectiveApplicationAcceptanceCheck
     wholeRunExperimentExecutionCheck

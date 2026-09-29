@@ -82,7 +82,8 @@ docker run --rm \
 docker run --rm \
   -v "$PWD/artifacts:/artifacts" \
   focaccia-artifact:<revision> \
-  plot-evaluation --input /artifacts/evaluation-001
+  plot-evaluation --input /artifacts/evaluation-001 \
+    --reproducer-sizes /artifacts/evaluation-001/reproducers/x86_64-linux/reproducer-sizes.json
 ```
 
 Run native collection on each native ISA before its consumers. The native
@@ -132,12 +133,14 @@ Native directories contain measurements, symbolic traces, and any RR data needed
 Generate available figures from one retained run with:
 
 ```bash
-nix run .#plot-evaluation -- --input runs/evaluation-001
+nix run .#plot-evaluation -- \
+  --input runs/evaluation-001 \
+  --reproducer-sizes runs/evaluation-001/reproducers/x86_64-linux/reproducer-sizes.json
 ```
 
 Outputs default to `runs/evaluation-001/figures/`. If a run has measurements from multiple systems, the command produces separate `figures/<system>/` directories and a `figures/multi-host-summary.json` index; it never combines host timing rows merely because their benchmark/mode labels differ. Single-host runs retain the flat output layout. Existing known figure names are removed before generation so an omitted figure cannot survive as stale evidence.
 
-The full-Curl tracing comparison is a specific cross-ISA role pairing: its x86-64 native producer profiles are paired with the AArch64 QEMU consumer profile only when the run's guest binary, workload, speculative oracle, RR/run-manifest provenance, expected localized CF finding, reports, and component-profile hashes agree for every iteration. This figure is written at `figures/tracing-comparison.pdf`; `figures/full-curl-role-pairing.json` records the verified producer/consumer identities, and `figures/multi-host-summary.json` schema v2 indexes the cross-role figure separately from host-local views. Other host measurements remain in their separate system views and are never averaged or substituted into this pairing. The Eliza `evaluate-emulator` stage writes the optional size evidence to `reproducers/x86_64-linux/reproducer-sizes.json`. Pass that path as optional `--reproducer-sizes PATH`; it uses schema `focaccia-reproducer-size-evidence-v1`, names guest and minimized binaries, binds both with SHA-256, and records the exact Focaccia revision. Artifact paths are relative to the evidence file:
+The full-Curl tracing comparison is a specific cross-ISA role pairing: its x86-64 native producer profiles are paired with the AArch64 QEMU consumer profile only when the run's guest binary, workload, speculative oracle, RR/run-manifest provenance, expected localized CF finding, reports, and component-profile hashes agree for every iteration. This figure is written at `figures/tracing-comparison.pdf`; `figures/full-curl-role-pairing.json` records the verified producer/consumer identities. The SQLite, Curl, and Lua figures likewise pair their x86-64 native producers with the AArch64 QEMU consumers only after checking binary, workload, oracle, RR/run-manifest, localized mismatch, report, and profile identities; `figures/selective-application-role-pairing.json` records that evidence. `figures/multi-host-summary.json` schema v2 indexes cross-role figures separately from host-local views. Other host measurements remain in their separate system views and are never averaged or substituted into these pairings. The Eliza `evaluate-emulator` stage writes the optional size evidence to `reproducers/x86_64-linux/reproducer-sizes.json`. Pass that path as optional `--reproducer-sizes PATH`; it uses schema `focaccia-reproducer-size-evidence-v1`, names guest and minimized binaries, binds both with SHA-256, and records the exact Focaccia revision. Artifact paths are relative to the evidence file:
 
 ```json
 {

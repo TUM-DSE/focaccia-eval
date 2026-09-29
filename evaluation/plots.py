@@ -63,6 +63,17 @@ EMULATED_METADATA_SCHEMA = "focaccia-emulated-evaluation-v1"
 ACCOUNTING_NAME = "timing-accounting.json"
 MULTI_HOST_SUMMARY_NAME = "multi-host-summary.json"
 MULTI_HOST_FULL_CURL_EVIDENCE_NAME = "full-curl-role-pairing.json"
+MULTI_HOST_SELECTIVE_EVIDENCE_NAME = "selective-application-role-pairing.json"
+SELECTIVE_APPLICATION_INJECTIONS = {
+    "curl": ("focaccia_injection_curl_2175", "CF"),
+    "lua": ("focaccia_injection_lua_2495", "R8"),
+    "sqlite": ("focaccia_injection_sqlite_508", "RAX"),
+}
+SELECTIVE_APPLICATION_EMULATORS = {
+    "curl": "qemu-8-2-0",
+    "lua": "qemu-9-0-0",
+    "sqlite": "qemu-6-1-0",
+}
 FIGURE_NAMES = (
     "split-overhead-breakdown.pdf",
     "tracing-comparison.pdf",
@@ -373,12 +384,7 @@ def _selective_application_evidence(
     if bounds is None and encoded.get("expectedValidation") == "mismatch":
         # Legacy evaluator metadata did not retain its expected range. Recover it
         # from the hash-bound guest ELF, never from the observed mismatches.
-        contracts = {
-            "curl": ("focaccia_injection_curl_2175", "CF"),
-            "lua": ("focaccia_injection_lua_2495", "R8"),
-            "sqlite": ("focaccia_injection_sqlite_508", "RAX"),
-        }
-        contract = contracts.get(benchmark)
+        contract = SELECTIVE_APPLICATION_INJECTIONS.get(benchmark)
         binary = _evidence_path(encoded.get("binary"), system_directory, relocation)
         native = encoded.get("native")
         if (
@@ -1112,6 +1118,316 @@ def _cross_isa_full_curl_measurements(
         "iterations": pair_iterations,
     }
     return paired, evidence
+
+
+def _cross_isa_selective_application_measurements(
+    run_root: Path,
+    producer: Measurements,
+    consumer: Measurements,
+    relocation: tuple[Path, Path] | None,
+) -> tuple[Measurements, dict[str, object]]:
+    """Pair x86-native and AArch64-QEMU Table 3 selective application roles."""
+    native_directory = run_root / "native" / "x86_64-linux"
+    qemu_directory = run_root / "emulated" / "qemu" / "aarch64-linux"
+    native_metadata = _load_json_object(native_directory / "metadata.json")
+    qemu_metadata = _load_json_object(qemu_directory / "metadata.json")
+    if (
+        native_metadata is None
+        or native_metadata.get("schema") != NATIVE_METADATA_SCHEMA
+        or native_metadata.get("role") != "native"
+        or native_metadata.get("system") != "x86_64-linux"
+        or native_metadata.get("status") != "passed"
+        or qemu_metadata is None
+        or qemu_metadata.get("schema") != EMULATED_METADATA_SCHEMA
+        or qemu_metadata.get("role") != "qemu"
+        or qemu_metadata.get("system") != "aarch64-linux"
+        or qemu_metadata.get("status") != "passed"
+    ):
+        raise EvaluationError("Selective-application role metadata is incompatible.")
+    native_cases = native_metadata.get("cases")
+    qemu_cases = qemu_metadata.get("cases")
+    if not isinstance(native_cases, dict) or not isinstance(qemu_cases, dict):
+        raise EvaluationError("Selective-application role maps are unavailable.")
+
+    native_names = ("concrete", "symbolic", "validation")
+    qemu_names = ("execution", "tracing", "validation")
+    pair_cases: dict[str, object] = {}
+    for application, (
+        source_symbol,
+        subject,
+    ) in SELECTIVE_APPLICATION_INJECTIONS.items():
+        native_case = native_cases.get(application)
+        qemu_case = qemu_cases.get(f"qemu-app-{application}")
+        qemu_id = SELECTIVE_APPLICATION_EMULATORS[application]
+        if (
+            not isinstance(native_case, dict)
+            or native_case.get("kind") != "application"
+            or native_case.get("status") != "passed"
+            or not isinstance(native_case.get("iterations"), list)
+            or not isinstance(qemu_case, dict)
+            or qemu_case.get("kind") != "application"
+            or qemu_case.get("benchmark") != application
+            or qemu_case.get("emulator") != qemu_id
+            or qemu_case.get("status") != "passed"
+            or not isinstance(qemu_case.get("iterations"), list)
+            or len(native_case["iterations"]) != len(qemu_case["iterations"])
+            or not native_case["iterations"]
+        ):
+            raise EvaluationError(
+                f"Selective-application role pair is incomplete for {application}."
+            )
+        iteration_evidence = []
+        for iteration, (native_item, qemu_item) in enumerate(
+            zip(native_case["iterations"], qemu_case["iterations"])
+        ):
+            if (
+                not isinstance(native_item, dict)
+                or native_item.get("kind") != "application"
+                or native_item.get("workloadKind") != application
+                or native_item.get("traceMode") != "selective"
+                or not isinstance(qemu_item, dict)
+                or qemu_item.get("kind") != "application"
+                or qemu_item.get("traceMode") != "selective"
+                or qemu_item.get("expectedValidation") != "mismatch"
+                or qemu_item.get("expectedMismatchLocalized") is not True
+                or qemu_item.get("expectedMismatchSubject") != subject
+                or not isinstance(qemu_item.get("native"), dict)
+            ):
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} is malformed."
+                )
+            for field in (
+                "injectedBinarySha256",
+                "workloadSha256",
+                "oracleSha256",
+                "traceFormat",
+                "traceMode",
+                "workloadKind",
+                "argv",
+                "rrTrace",
+            ):
+                if native_item.get(field) != qemu_item["native"].get(field):
+                    raise EvaluationError(
+                        f"Selective {application} iteration {iteration} has mismatched producer metadata."
+                    )
+            binary_hash = native_item.get("injectedBinarySha256")
+            oracle_hash = native_item.get("oracleSha256")
+            workload_hash = native_item.get("workloadSha256")
+            if (
+                not isinstance(binary_hash, str)
+                or not isinstance(oracle_hash, str)
+                or not isinstance(workload_hash, str)
+                or qemu_item.get("binarySha256") != binary_hash
+                or qemu_item.get("oracleSha256") != oracle_hash
+                or qemu_item.get("workloadSha256") != workload_hash
+                or qemu_item.get("argv") != native_item.get("argv")
+                or not isinstance(qemu_item.get("profileSha256"), str)
+            ):
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} guest/input/oracle identities disagree."
+                )
+            guest_binary = _contained_evidence_path(
+                native_item.get("injectedBinary"),
+                native_directory,
+                run_root,
+                relocation,
+            )
+            oracle = _contained_evidence_path(
+                native_item.get("oracle"), native_directory, run_root, relocation
+            )
+            qemu_binary = _contained_evidence_path(
+                qemu_item.get("binary"), qemu_directory, run_root, relocation
+            )
+            qemu_oracle = _contained_evidence_path(
+                qemu_item.get("oracle"), qemu_directory, run_root, relocation
+            )
+            workload = _contained_evidence_path(
+                qemu_item.get("workload"), qemu_directory, run_root, relocation
+            )
+            for path, digest, label in (
+                (guest_binary, binary_hash, "native guest binary"),
+                (qemu_binary, binary_hash, "QEMU guest binary"),
+                (oracle, oracle_hash, "native oracle"),
+                (qemu_oracle, oracle_hash, "QEMU oracle"),
+                (workload, workload_hash, "QEMU workload"),
+            ):
+                if _sha256(path) != digest:
+                    raise EvaluationError(
+                        f"Selective {application} iteration {iteration} {label} hash is invalid."
+                    )
+            native_rr = _contained_evidence_path(
+                native_item.get("rrTrace"),
+                native_directory,
+                run_root,
+                relocation,
+                directory=True,
+            )
+            qemu_rr = _contained_evidence_path(
+                qemu_item.get("rrTrace"),
+                qemu_directory,
+                run_root,
+                relocation,
+                directory=True,
+            )
+            if native_rr != qemu_rr or not (native_rr / "events").is_file():
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} uses a different RR recording."
+                )
+            stop_address = native_item.get("stopAddress")
+            expected_range = qemu_item.get("expectedMismatchRange")
+            if type(stop_address) is not int or not isinstance(expected_range, list):
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} has no injection boundary."
+                )
+            injection_address = read_symbols(Path("nm"), guest_binary).get(
+                source_symbol
+            )
+            if not isinstance(injection_address, int) or expected_range != [
+                injection_address,
+                stop_address,
+            ]:
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} mismatch range is not guest-bound."
+                )
+            report_path = _contained_evidence_path(
+                qemu_item.get("report"), qemu_directory, run_root, relocation
+            )
+            report_hash = qemu_item.get("reportSha256")
+            if not isinstance(report_hash, str) or _sha256(report_path) != report_hash:
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} report hash is invalid."
+                )
+            report = _load_json_object(report_path)
+            if report is None:
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} report is unavailable."
+                )
+            try:
+                require_selective_application_acceptance(
+                    report, "mismatch", expected_range, subject
+                )
+            except EvaluationError as error:
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} report is not admissible."
+                ) from error
+            manifest_path = _contained_evidence_path(
+                qemu_item.get("runManifest"), qemu_directory, run_root, relocation
+            )
+            manifest_hash = qemu_item.get("runManifestSha256")
+            if (
+                not isinstance(manifest_hash, str)
+                or _sha256(manifest_path) != manifest_hash
+            ):
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} run-manifest hash is invalid."
+                )
+            manifest = _load_json_object(manifest_path)
+            if manifest is None:
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} run manifest is unavailable."
+                )
+            architecture = manifest.get("guest_architecture")
+            manifest_binary = manifest.get("binary")
+            manifest_oracle = manifest.get("oracle")
+            manifest_inputs = manifest.get("inputs")
+            manifest_rr = manifest.get("rr")
+            if (
+                manifest.get("schema") != "focaccia-rr-qemu-run-v1"
+                or manifest.get("argv") != native_item.get("argv")
+                or not isinstance(architecture, dict)
+                or architecture != {"isa": "x86_64", "endianness": "little"}
+                or not isinstance(manifest_binary, dict)
+                or manifest_binary.get("sha256") != binary_hash
+                or not isinstance(manifest_oracle, dict)
+                or manifest_oracle.get("sha256") != oracle_hash
+                or not isinstance(manifest_inputs, list)
+                or {
+                    item.get("name"): item.get("sha256")
+                    for item in manifest_inputs
+                    if isinstance(item, dict)
+                }.get("workload")
+                != workload_hash
+                or not isinstance(manifest_rr, dict)
+                or manifest_rr.get("native_architecture") != architecture
+                or manifest_rr.get("schema_version") != "rr-trace-v85"
+                or manifest_rr.get("trace_version") != 85
+                or not isinstance(manifest_rr.get("trace_uuid"), str)
+                or len(manifest_rr["trace_uuid"]) != 32
+                or not isinstance(manifest_rr.get("directory_sha256"), str)
+                or len(manifest_rr["directory_sha256"]) != 64
+            ):
+                raise EvaluationError(
+                    f"Selective {application} iteration {iteration} replay identity is inconsistent."
+                )
+            iteration_evidence.append(
+                {
+                    "iteration": iteration,
+                    "guestBinarySha256": binary_hash,
+                    "workloadSha256": workload_hash,
+                    "oracleSha256": oracle_hash,
+                    "traceFormat": native_item.get("traceFormat"),
+                    "rrTraceUuid": manifest_rr["trace_uuid"],
+                    "runManifestSha256": manifest_hash,
+                    "validationReportSha256": report_hash,
+                    "nativeProfileSha256": native_item.get("profileSha256"),
+                    "qemuProfileSha256": qemu_item.get("profileSha256"),
+                }
+            )
+        emulator = qemu_case["emulator"]
+        if consumer.qemu_mode(application, qemu_names) != emulator:
+            raise EvaluationError(
+                f"Selective {application} QEMU profile mode does not match its case."
+            )
+        pair_cases[application] = {
+            "emulator": emulator,
+            "iterations": iteration_evidence,
+        }
+
+    rows: list[dict[str, str]] = []
+    for application in APPLICATIONS:
+        if producer.get(application, "native", "execution") is None:
+            raise EvaluationError(
+                f"Selective {application} native baseline timing is unavailable."
+            )
+    for data, system, modes in (
+        (producer, "x86_64-linux", {"native", "native-selective"}),
+        (consumer, "aarch64-linux", set(SELECTIVE_APPLICATION_EMULATORS.values())),
+    ):
+        for (benchmark, mode, component), seconds in data.values.items():
+            if benchmark in APPLICATIONS and mode in modes:
+                rows.append(
+                    {
+                        "benchmark": benchmark,
+                        "mode": mode,
+                        "component": component,
+                        "seconds": str(seconds),
+                        "status": "passed",
+                        "system": system,
+                    }
+                )
+    paired = Measurements(rows)
+    if any(
+        paired.components(application, "native-selective", native_names) is None
+        or paired.qemu_mode(application, qemu_names)
+        != pair_cases[application]["emulator"]
+        or paired.components(
+            application,
+            str(pair_cases[application]["emulator"]),
+            qemu_names,
+        )
+        is None
+        for application in APPLICATIONS
+    ):
+        raise EvaluationError(
+            "Cross-ISA selective application timing roles are incomplete."
+        )
+    return paired, {
+        "schema": "focaccia-cross-isa-selective-applications-role-pair-v1",
+        "guestIsa": "x86_64",
+        "producerSystem": "x86_64-linux",
+        "emulatorHostSystem": "aarch64-linux",
+        "applications": pair_cases,
+    }
 
 
 def _save(fig: plt.Figure, output: Path, name: str) -> Path:
@@ -1856,7 +2172,12 @@ def _generate_figures(
     reproducer_sizes: dict[str, tuple[float, float]],
 ) -> list[Path]:
     output.mkdir(parents=True, exist_ok=True)
-    for name in (*FIGURE_NAMES, ACCOUNTING_NAME, MULTI_HOST_FULL_CURL_EVIDENCE_NAME):
+    for name in (
+        *FIGURE_NAMES,
+        ACCOUNTING_NAME,
+        MULTI_HOST_FULL_CURL_EVIDENCE_NAME,
+        MULTI_HOST_SELECTIVE_EVIDENCE_NAME,
+    ):
         (output / name).unlink(missing_ok=True)
     generated = [
         figure
@@ -1885,6 +2206,7 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     (output / MULTI_HOST_SUMMARY_NAME).unlink(missing_ok=True)
     (output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME).unlink(missing_ok=True)
+    (output / MULTI_HOST_SELECTIVE_EVIDENCE_NAME).unlink(missing_ok=True)
     systems = evidence_systems(args.input)
     _configure_matplotlib()
     sizes = load_reproducer_sizes(args.reproducer_sizes)
@@ -1905,6 +2227,7 @@ def main() -> int:
         for name in (*FIGURE_NAMES, ACCOUNTING_NAME):
             (output / name).unlink(missing_ok=True)
         (output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME).unlink(missing_ok=True)
+        (output / MULTI_HOST_SELECTIVE_EVIDENCE_NAME).unlink(missing_ok=True)
         host_measurements: dict[str, Measurements] = {}
         for system in systems:
             measurements = load_measurements(
@@ -1916,6 +2239,7 @@ def main() -> int:
             summary[system] = [path.name for path in host_generated]
 
         cross_role: dict[str, object] = {"status": "not-applicable"}
+        selective_role: dict[str, object] = {"status": "not-applicable"}
         if {"x86_64-linux", "aarch64-linux"}.issubset(host_measurements):
             try:
                 paired, evidence = _cross_isa_full_curl_measurements(
@@ -1948,13 +2272,56 @@ def main() -> int:
                 _warn(f"not generating cross-ISA full-Curl comparison: {error}")
                 cross_role = {"status": "omitted", "reason": str(error)}
 
+            try:
+                selective_data, selective_evidence = (
+                    _cross_isa_selective_application_measurements(
+                        args.input,
+                        host_measurements["x86_64-linux"],
+                        host_measurements["aarch64-linux"],
+                        (args.relocate_from, args.input)
+                        if args.relocate_from is not None
+                        else None,
+                    )
+                )
+                selective_figure = plot_selective_applications(selective_data, output)
+                trend_figure = plot_application_trends(selective_data, output)
+                if selective_figure is None or trend_figure is None:
+                    raise EvaluationError(
+                        "paired selective application components are incomplete"
+                    )
+                selective_evidence["figures"] = {
+                    selective_figure.name: _sha256(selective_figure),
+                    trend_figure.name: _sha256(trend_figure),
+                }
+                selective_evidence_path = output / MULTI_HOST_SELECTIVE_EVIDENCE_NAME
+                selective_evidence_path.write_text(
+                    json.dumps(selective_evidence, indent=2, sort_keys=True) + "\n"
+                )
+                selective_role = {
+                    "status": "passed",
+                    "figures": [selective_figure.name, trend_figure.name],
+                    "evidence": selective_evidence_path.name,
+                    "evidenceSha256": _sha256(selective_evidence_path),
+                }
+                generated.extend(
+                    (selective_figure, trend_figure, selective_evidence_path)
+                )
+            except (EvaluationError, OSError, ValueError) as error:
+                _warn(
+                    f"not generating cross-ISA selective application figures: {error}"
+                )
+                selective_role = {"status": "omitted", "reason": str(error)}
+
         summary_path = output / MULTI_HOST_SUMMARY_NAME
         summary_path.write_text(
             json.dumps(
                 {
                     "schema": "focaccia-multi-host-plot-summary-v2",
                     "hosts": summary,
-                    "crossRolePlots": {"curl-full": cross_role},
+                    "crossRolePlots": {
+                        "curl-full": cross_role,
+                        "selective-applications": selective_role,
+                    },
                 },
                 indent=2,
                 sort_keys=True,

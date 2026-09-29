@@ -9,4 +9,18 @@ focaccia_injection_curl_2175:
 .globl focaccia_trace_stop_curl
 focaccia_trace_stop_curl:
     nop
+    nop
+.globl focaccia_injection_lua_2495
+focaccia_injection_lua_2495:
+    nop
+.globl focaccia_trace_stop_lua
+focaccia_trace_stop_lua:
+    nop
+    nop
+.globl focaccia_injection_sqlite_508
+focaccia_injection_sqlite_508:
+    nop
+.globl focaccia_trace_stop_sqlite
+focaccia_trace_stop_sqlite:
+    nop
     hlt
