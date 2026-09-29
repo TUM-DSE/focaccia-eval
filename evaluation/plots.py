@@ -30,6 +30,9 @@ from matplotlib.ticker import MultipleLocator
 
 from evaluation import (
     EvaluationError,
+    _only_expected_application_mismatches,
+    _require_successful_replay,
+    _require_whole_program_completion,
     read_symbols,
     require_selective_application_acceptance,
 )
@@ -59,6 +62,7 @@ NATIVE_METADATA_SCHEMA = "focaccia-native-evaluation-v2"
 EMULATED_METADATA_SCHEMA = "focaccia-emulated-evaluation-v1"
 ACCOUNTING_NAME = "timing-accounting.json"
 MULTI_HOST_SUMMARY_NAME = "multi-host-summary.json"
+MULTI_HOST_FULL_CURL_EVIDENCE_NAME = "full-curl-role-pairing.json"
 FIGURE_NAMES = (
     "split-overhead-breakdown.pdf",
     "tracing-comparison.pdf",
@@ -723,6 +727,391 @@ def load_measurements(
                 rows.append({**row, "system": expected_system})
         rows.extend({**row, "system": expected_system} for row in profile_rows)
     return Measurements(rows)
+
+
+def _contained_evidence_path(
+    encoded: object,
+    system_directory: Path,
+    run_root: Path,
+    relocation: tuple[Path, Path] | None,
+    *,
+    directory: bool = False,
+) -> Path:
+    path = _evidence_path(encoded, system_directory, relocation)
+    if path is None:
+        raise EvaluationError(
+            "Full-Curl role metadata contains an invalid artifact path."
+        )
+    resolved_root = run_root.resolve()
+    resolved_path = path.resolve()
+    artifact_exists = resolved_path.is_dir() if directory else resolved_path.is_file()
+    if not resolved_path.is_relative_to(resolved_root) or not artifact_exists:
+        raise EvaluationError(
+            f"Full-Curl role artifact is absent or outside the run root: {path}"
+        )
+    return resolved_path
+
+
+def _cross_isa_full_curl_measurements(
+    run_root: Path,
+    producer: Measurements,
+    consumer: Measurements,
+    relocation: tuple[Path, Path] | None,
+) -> tuple[Measurements, dict[str, object]]:
+    """Pair the sole supported x86-native/AArch64-QEMU full-Curl roles.
+
+    This view intentionally joins only roles for the same guest program, input,
+    oracle and iteration. It does not merge or average measurements across
+    hosts; every component in a mode retains its actual producing host.
+    """
+    native_directory = run_root / "native" / "x86_64-linux"
+    qemu_directory = run_root / "emulated" / "qemu" / "aarch64-linux"
+    native_metadata = _load_json_object(native_directory / "metadata.json")
+    qemu_metadata = _load_json_object(qemu_directory / "metadata.json")
+    if (
+        native_metadata is None
+        or native_metadata.get("schema") != NATIVE_METADATA_SCHEMA
+        or native_metadata.get("role") != "native"
+        or native_metadata.get("system") != "x86_64-linux"
+        or native_metadata.get("status") != "passed"
+        or qemu_metadata is None
+        or qemu_metadata.get("schema") != EMULATED_METADATA_SCHEMA
+        or qemu_metadata.get("role") != "qemu"
+        or qemu_metadata.get("system") != "aarch64-linux"
+        or qemu_metadata.get("status") != "passed"
+    ):
+        raise EvaluationError(
+            "Full-Curl producer/consumer role metadata is incompatible."
+        )
+    native_cases = native_metadata.get("cases")
+    qemu_cases = qemu_metadata.get("cases")
+    native_case = (
+        native_cases.get("curl-full") if isinstance(native_cases, dict) else None
+    )
+    qemu_case = (
+        qemu_cases.get("qemu-app-curl-full") if isinstance(qemu_cases, dict) else None
+    )
+    if (
+        not isinstance(native_case, dict)
+        or native_case.get("kind") != "application"
+        or native_case.get("status") != "passed"
+        or not isinstance(native_case.get("iterations"), list)
+        or not isinstance(qemu_case, dict)
+        or qemu_case.get("kind") != "application"
+        or qemu_case.get("benchmark") != "curl-full"
+        or qemu_case.get("emulator") != "qemu-8-2-0"
+        or qemu_case.get("status") != "passed"
+        or not isinstance(qemu_case.get("iterations"), list)
+        or not native_case["iterations"]
+        or len(native_case["iterations"]) != len(qemu_case["iterations"])
+    ):
+        raise EvaluationError("Full-Curl native and QEMU iterations do not pair.")
+
+    identity_fields = (
+        "injectedBinarySha256",
+        "workloadSha256",
+        "oracleSha256",
+        "traceFormat",
+        "traceMode",
+        "workloadKind",
+        "argv",
+        "rrTrace",
+    )
+    pair_iterations: list[dict[str, object]] = []
+    for iteration, (native_item, qemu_item) in enumerate(
+        zip(native_case["iterations"], qemu_case["iterations"])
+    ):
+        if (
+            not isinstance(native_item, dict)
+            or native_item.get("kind") != "application"
+            or native_item.get("workloadKind") != "curl"
+            or native_item.get("traceMode") != "full"
+            or not isinstance(native_item.get("argv"), list)
+            or native_item.get("traceFormat") not in {"msgpack", "json"}
+            or not isinstance(qemu_item, dict)
+            or qemu_item.get("kind") != "application"
+            or qemu_item.get("traceMode") != "full"
+            or qemu_item.get("expectedValidation") != "mismatch"
+            or qemu_item.get("expectedMismatchLocalized") is not True
+            or qemu_item.get("expectedMismatchSubject") != "CF"
+            or not isinstance(qemu_item.get("native"), dict)
+        ):
+            raise EvaluationError(f"Full-Curl iteration {iteration} is malformed.")
+        nested_native = qemu_item["native"]
+        if any(
+            native_item.get(field) != nested_native.get(field)
+            for field in identity_fields
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} has mismatched producer metadata."
+            )
+        native_captures = native_item.get("fullCaptures")
+        cross_capture = (
+            native_captures.get("native-full-cross-validated")
+            if isinstance(native_captures, dict)
+            else None
+        )
+        speculative_capture = (
+            native_captures.get("native-full-speculative")
+            if isinstance(native_captures, dict)
+            else None
+        )
+        if (
+            not isinstance(cross_capture, dict)
+            or cross_capture.get("crossValidated") is not True
+            or not isinstance(speculative_capture, dict)
+            or speculative_capture.get("crossValidated") is not False
+            or not isinstance(cross_capture.get("profileSha256"), str)
+            or not isinstance(speculative_capture.get("profileSha256"), str)
+            or not isinstance(qemu_item.get("profileSha256"), str)
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} lacks paired native profiles."
+            )
+        binary_hash = native_item.get("injectedBinarySha256")
+        oracle_hash = native_item.get("oracleSha256")
+        workload_hash = native_item.get("workloadSha256")
+        if (
+            not isinstance(binary_hash, str)
+            or not isinstance(oracle_hash, str)
+            or not isinstance(workload_hash, str)
+            or qemu_item.get("binarySha256") != binary_hash
+            or qemu_item.get("oracleSha256") != oracle_hash
+            or qemu_item.get("workloadSha256") != workload_hash
+            or qemu_item.get("argv") != native_item.get("argv")
+            or cross_capture.get("oracleSha256") != oracle_hash
+            or speculative_capture.get("oracleSha256") != oracle_hash
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} guest/input/oracle identities disagree."
+            )
+
+        guest_binary = _contained_evidence_path(
+            native_item.get("injectedBinary"),
+            native_directory,
+            run_root,
+            relocation,
+        )
+        oracle = _contained_evidence_path(
+            native_item.get("oracle"), native_directory, run_root, relocation
+        )
+        recorded_guest_binary = _contained_evidence_path(
+            qemu_item.get("binary"), qemu_directory, run_root, relocation
+        )
+        recorded_oracle = _contained_evidence_path(
+            qemu_item.get("oracle"), qemu_directory, run_root, relocation
+        )
+        qemu_workload = _contained_evidence_path(
+            qemu_item.get("workload"), qemu_directory, run_root, relocation
+        )
+        for path, digest, label in (
+            (guest_binary, binary_hash, "native guest binary"),
+            (oracle, oracle_hash, "native speculative oracle"),
+            (recorded_guest_binary, binary_hash, "QEMU guest binary"),
+            (recorded_oracle, oracle_hash, "QEMU oracle"),
+            (qemu_workload, workload_hash, "QEMU workload"),
+        ):
+            if _sha256(path) != digest:
+                raise EvaluationError(
+                    f"Full-Curl iteration {iteration} {label} hash does not match metadata."
+                )
+        native_rr = _contained_evidence_path(
+            native_item.get("rrTrace"),
+            native_directory,
+            run_root,
+            relocation,
+            directory=True,
+        )
+        qemu_rr = _contained_evidence_path(
+            qemu_item.get("rrTrace"),
+            qemu_directory,
+            run_root,
+            relocation,
+            directory=True,
+        )
+        if qemu_rr != native_rr:
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} QEMU replay uses a different RR trace."
+            )
+        if not native_rr.is_dir() or not (native_rr / "events").is_file():
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} producer RR recording is unavailable."
+            )
+        stop_address = native_item.get("stopAddress")
+        mismatch_range = qemu_item.get("expectedMismatchRange")
+        mismatch_subject = qemu_item.get("expectedMismatchSubject")
+        if type(stop_address) is not int or not isinstance(mismatch_range, list):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} has no exact injection boundary."
+            )
+        symbols = read_symbols(Path("nm"), guest_binary)
+        source_address = symbols.get("focaccia_injection_curl_2175")
+        if (
+            not isinstance(source_address, int)
+            or mismatch_range != [source_address, stop_address]
+            or mismatch_subject != "CF"
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} mismatch contract is not guest-bound."
+            )
+
+        report_path = _contained_evidence_path(
+            qemu_item.get("report"), qemu_directory, run_root, relocation
+        )
+        report_hash = qemu_item.get("reportSha256")
+        if not isinstance(report_hash, str) or _sha256(report_path) != report_hash:
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} validation report hash is invalid."
+            )
+        report = _load_json_object(report_path)
+        if (
+            report is None
+            or report.get("schema") != "focaccia-qemu-validation-v1"
+            or report.get("status") != "mismatch"
+            or not _only_expected_application_mismatches(
+                report, source_address, stop_address, "CF"
+            )
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} lacks exclusive expected CF evidence."
+            )
+        try:
+            _require_whole_program_completion(report)
+            _require_successful_replay(report)
+        except EvaluationError as error:
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} lacks complete replay evidence."
+            ) from error
+
+        manifest_path = _contained_evidence_path(
+            qemu_item.get("runManifest"), qemu_directory, run_root, relocation
+        )
+        manifest_hash = qemu_item.get("runManifestSha256")
+        if (
+            not isinstance(manifest_hash, str)
+            or _sha256(manifest_path) != manifest_hash
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} run-manifest hash is invalid."
+            )
+        manifest = _load_json_object(manifest_path)
+        if manifest is None:
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} run manifest is unavailable."
+            )
+        architecture = manifest.get("guest_architecture")
+        manifest_binary = manifest.get("binary")
+        manifest_oracle = manifest.get("oracle")
+        manifest_inputs = manifest.get("inputs")
+        if (
+            manifest.get("schema") != "focaccia-rr-qemu-run-v1"
+            or manifest.get("argv") != native_item.get("argv")
+            or not isinstance(architecture, dict)
+            or architecture.get("isa") != "x86_64"
+            or architecture.get("endianness") != "little"
+            or not isinstance(manifest_binary, dict)
+            or manifest_binary.get("sha256") != binary_hash
+            or not isinstance(manifest_oracle, dict)
+            or manifest_oracle.get("sha256") != oracle_hash
+            or not isinstance(manifest_inputs, list)
+            or {
+                item.get("name"): item.get("sha256")
+                for item in manifest_inputs
+                if isinstance(item, dict)
+            }.get("workload")
+            != workload_hash
+            or not isinstance(manifest.get("rr"), dict)
+            or manifest["rr"].get("native_architecture")
+            != {"isa": "x86_64", "endianness": "little"}
+            or manifest["rr"].get("schema_version") != "rr-trace-v85"
+            or manifest["rr"].get("trace_version") != 85
+            or not isinstance(manifest["rr"].get("trace_uuid"), str)
+            or len(manifest["rr"]["trace_uuid"]) != 32
+            or not isinstance(manifest["rr"].get("directory_sha256"), str)
+            or len(manifest["rr"]["directory_sha256"]) != 64
+        ):
+            raise EvaluationError(
+                f"Full-Curl iteration {iteration} replay manifest identity disagrees."
+            )
+
+        pair_iterations.append(
+            {
+                "iteration": iteration,
+                "guestBinarySha256": binary_hash,
+                "workloadSha256": workload_hash,
+                "oracleSha256": oracle_hash,
+                "traceFormat": native_item["traceFormat"],
+                "rrSchema": manifest["rr"].get("schema_version"),
+                "rrTraceUuid": manifest["rr"].get("trace_uuid"),
+                "validationReportSha256": report_hash,
+                "runManifestSha256": manifest_hash,
+                "profileSha256": {
+                    "nativeCrossValidated": cross_capture["profileSha256"],
+                    "nativeSpeculative": speculative_capture["profileSha256"],
+                    "qemu": qemu_item["profileSha256"],
+                },
+            }
+        )
+
+    native_qemu = "qemu-8-2-0"
+    if (
+        consumer.qemu_mode("curl-full", ("execution", "tracing", "validation"))
+        != native_qemu
+    ):
+        raise EvaluationError(
+            "Cross-ISA full Curl does not have one complete QEMU mode."
+        )
+    rows: list[dict[str, str]] = []
+    role_modes = (
+        (
+            producer,
+            "x86_64-linux",
+            {"native-full-cross-validated", "native-full-speculative"},
+        ),
+        (consumer, "aarch64-linux", {native_qemu}),
+    )
+    for data, system, modes in role_modes:
+        for (benchmark, mode, component), seconds in data.values.items():
+            if benchmark == "curl-full" and mode in modes:
+                rows.append(
+                    {
+                        "benchmark": benchmark,
+                        "mode": mode,
+                        "component": component,
+                        "seconds": str(seconds),
+                        "status": "passed",
+                        "system": system,
+                    }
+                )
+    paired = Measurements(rows)
+    if (
+        paired.components(
+            "curl-full",
+            "native-full-cross-validated",
+            ("concrete", "symbolic", "validation"),
+        )
+        is None
+        or paired.components(
+            "curl-full",
+            "native-full-speculative",
+            ("concrete", "symbolic", "validation"),
+        )
+        is None
+        or paired.components(
+            "curl-full", native_qemu, ("execution", "tracing", "validation")
+        )
+        is None
+    ):
+        raise EvaluationError("Cross-ISA full-Curl timing components are incomplete.")
+    evidence = {
+        "schema": "focaccia-cross-isa-full-curl-role-pair-v1",
+        "guestIsa": "x86_64",
+        "producerSystem": "x86_64-linux",
+        "emulatorHostSystem": "aarch64-linux",
+        "emulator": native_qemu,
+        "iterations": pair_iterations,
+    }
+    return paired, evidence
 
 
 def _save(fig: plt.Figure, output: Path, name: str) -> Path:
@@ -1467,7 +1856,7 @@ def _generate_figures(
     reproducer_sizes: dict[str, tuple[float, float]],
 ) -> list[Path]:
     output.mkdir(parents=True, exist_ok=True)
-    for name in (*FIGURE_NAMES, ACCOUNTING_NAME):
+    for name in (*FIGURE_NAMES, ACCOUNTING_NAME, MULTI_HOST_FULL_CURL_EVIDENCE_NAME):
         (output / name).unlink(missing_ok=True)
     generated = [
         figure
@@ -1493,6 +1882,9 @@ def main() -> int:
     ):
         parser.error("--relocate-from must be an absolute run root without '..'")
     output = args.output or args.input / "figures"
+    output.mkdir(parents=True, exist_ok=True)
+    (output / MULTI_HOST_SUMMARY_NAME).unlink(missing_ok=True)
+    (output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME).unlink(missing_ok=True)
     systems = evidence_systems(args.input)
     _configure_matplotlib()
     sizes = load_reproducer_sizes(args.reproducer_sizes)
@@ -1508,17 +1900,58 @@ def main() -> int:
         output.mkdir(parents=True, exist_ok=True)
         for name in (*FIGURE_NAMES, ACCOUNTING_NAME):
             (output / name).unlink(missing_ok=True)
+        (output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME).unlink(missing_ok=True)
+        host_measurements: dict[str, Measurements] = {}
         for system in systems:
             measurements = load_measurements(
                 args.input, relocate_from=args.relocate_from, system=system
             )
+            host_measurements[system] = measurements
             host_generated = _generate_figures(measurements, output / system, sizes)
             generated.extend(host_generated)
             summary[system] = [path.name for path in host_generated]
+
+        cross_role: dict[str, object] = {"status": "not-applicable"}
+        if {"x86_64-linux", "aarch64-linux"}.issubset(host_measurements):
+            try:
+                paired, evidence = _cross_isa_full_curl_measurements(
+                    args.input,
+                    host_measurements["x86_64-linux"],
+                    host_measurements["aarch64-linux"],
+                    (args.relocate_from, args.input)
+                    if args.relocate_from is not None
+                    else None,
+                )
+                figure = plot_full_curl(paired, output)
+                if figure is None:
+                    raise EvaluationError("paired full-Curl components are incomplete")
+                evidence["figure"] = {
+                    "path": figure.name,
+                    "sha256": _sha256(figure),
+                }
+                evidence_path = output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME
+                evidence_path.write_text(
+                    json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+                )
+                cross_role = {
+                    "status": "passed",
+                    "figure": figure.name,
+                    "evidence": evidence_path.name,
+                    "evidenceSha256": _sha256(evidence_path),
+                }
+                generated.extend((figure, evidence_path))
+            except (EvaluationError, OSError, ValueError) as error:
+                _warn(f"not generating cross-ISA full-Curl comparison: {error}")
+                cross_role = {"status": "omitted", "reason": str(error)}
+
         summary_path = output / MULTI_HOST_SUMMARY_NAME
         summary_path.write_text(
             json.dumps(
-                {"schema": "focaccia-multi-host-plot-summary-v1", "hosts": summary},
+                {
+                    "schema": "focaccia-multi-host-plot-summary-v2",
+                    "hosts": summary,
+                    "crossRolePlots": {"curl-full": cross_role},
+                },
                 indent=2,
                 sort_keys=True,
             )

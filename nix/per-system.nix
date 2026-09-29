@@ -1116,6 +1116,7 @@ in
       explicit-profile-relocation = plotOutputs.profileRelocationCheck;
       host-separated-measurement-identity = plotOutputs.hostMeasurementIdentityCheck;
       multi-host-evaluation-plot-workflow = plotOutputs.multiHostEvaluationPlotWorkflowCheck;
+      cross-isa-full-curl-role-pairing = plotOutputs.crossIsaFullCurlRolePairingCheck;
       exclusive-and-end-to-end-timing-accounting = plotOutputs.timingAccountingCheck;
       application-trend-ratio-normalization = plotOutputs.applicationTrendRatiosCheck;
       nix-plot-font-discovery = plotOutputs.fontDiscoveryCheck;
