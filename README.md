@@ -21,7 +21,8 @@ The repository includes the following components.
 - Deterministic QEMU consumers for the three injected applications. These consumers verify RR effects, content-bound manifests, and recreated workload interfaces.
 - The Table 3 injection patches, deterministic workloads, and syscall-backed time shim.
 - Dedicated full-Curl native and QEMU measurement applications.
-- Evidence-driven plotting from evaluator results, metadata, hash-bound profiles, and separately recorded reproducer sizes.
+- Paper-matching Figures 2 and 6–9 from evaluator results, metadata, hash-bound profiles, separately recorded reproducer sizes, and the paper's reviewed bug-study classification.
+- A clearly separate supplemental application trend-ratio comparison.
 
 The following work remains outside the checked artifact.
 
@@ -184,11 +185,13 @@ nix run .#plot-evaluation -- \
   --reproducer-sizes runs/evaluation-001/reproducers/x86_64-linux/reproducer-sizes.json
 ```
 
-PDF files are written to `runs/evaluation-001/figures` by default. When the run contains measurements for the same case on multiple emulator hosts, plots are separated into `figures/<system>/`, with `figures/multi-host-summary.json` indexing the outputs; host measurements are never merged. Missing, failed, or provenance-invalid measurements produce warnings and are omitted. They are never replaced with zeros or paper values.
+PDF files are written to `runs/evaluation-001/figures` by default. The paper-matching outputs are `combined-bug-study.pdf` (Figure 2), `split-overhead-breakdown.pdf` (Figure 6), `tracing-comparison.pdf` (Figure 7), `reproducer-code-size.pdf` (Figure 8), and `realworld-split-overhead-breakdown.pdf` (Figure 9). Where the paper combines cases produced on different physical systems, the root figure follows the paper's case order while a companion JSON file retains each case's producing-system identity; measurements are never averaged or assembled across hosts. Host-local diagnostic views remain under `figures/<system>/`, with `figures/multi-host-summary.json` indexing all outputs.
+
+`application-trend-ratios.pdf` is supplemental. It compares paper and current QEMU/native ratios and is not a substitute for any paper figure. Missing, failed, or provenance-invalid measurements produce warnings and are omitted. They are never replaced with zeros or paper runtime values.
 
 `combined-bug-study.pdf` is the sole exception. It presents the fixed and manually reviewed QEMU and Box64 classification percentages from the paper and does not depend on runtime measurements.
 
-The `evaluation-plots` package and `data-driven-evaluation-plots` check use deterministic fixtures to verify the plotting interface. They are not paper measurements.
+The `evaluation-plots` package and `data-driven-evaluation-plots` check use deterministic fixtures to verify the plotting interface. The named `paper-figure-visual-contract` check verifies figure dimensions, case/order labels, legends, hatches, axes, ticks, and complete Figure 6 case coverage. They are not paper measurements.
 
 ## Catalog and architecture model
 

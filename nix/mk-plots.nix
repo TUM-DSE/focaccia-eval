@@ -104,6 +104,20 @@ let
       python -m unittest -v test_plots
       touch "$out"
     '';
+  paperFigureVisualContractCheck = pkgs.runCommand "paper-figure-visual-contract"
+    { nativeBuildInputs = [ python pkgs.ruff ]; }
+    ''
+      export HOME="$TMPDIR"
+      export FONTCONFIG_FILE=${fontsConf}
+      export MPLBACKEND=Agg
+      cp ${../evaluation/plots.py} plots.py
+      cp ${../evaluation/test_plots.py} test_plots.py
+      cp ${../evaluation/evaluation.py} evaluation.py
+      ruff check plots.py test_plots.py
+      ruff format --check plots.py test_plots.py
+      python -m unittest -v test_plots.PaperFigureVisualContractTests
+      touch "$out"
+    '';
   applicationTrendRatiosCheck = pkgs.runCommand "application-trend-ratio-normalization"
     { nativeBuildInputs = [ python pkgs.ruff ]; }
     ''
@@ -294,6 +308,7 @@ in
 {
   inherit
     applicationTrendRatiosCheck
+    paperFigureVisualContractCheck
     fontsConf
     fontDiscoveryCheck
     fatalDiagnosticEligibilityCheck

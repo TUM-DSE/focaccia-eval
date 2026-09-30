@@ -39,9 +39,12 @@ from evaluation import (
 
 
 FIXED_METADATA = {"CreationDate": None}
-PAPER_ONE_COLUMN = (3.335, 2.3)
-PAPER_TWO_COLUMN = (7.0, 2.8)
+PAPER_ONE_COLUMN_WIDTH = 3.335
+PAPER_TWO_COLUMN_WIDTH = 7.0
+PAPER_ONE_COLUMN = (PAPER_ONE_COLUMN_WIDTH, 2.3)
+PAPER_TWO_COLUMN = (PAPER_TWO_COLUMN_WIDTH, 2.8)
 COLORS = sns.color_palette("pastel")
+MUTED = sns.color_palette("muted")
 HATCHES = ("//", "xx", "OO")
 
 TRIGGER_GROUPS = (
@@ -64,6 +67,7 @@ ACCOUNTING_NAME = "timing-accounting.json"
 MULTI_HOST_SUMMARY_NAME = "multi-host-summary.json"
 MULTI_HOST_FULL_CURL_EVIDENCE_NAME = "full-curl-role-pairing.json"
 MULTI_HOST_SELECTIVE_EVIDENCE_NAME = "selective-application-role-pairing.json"
+MULTI_HOST_TRIGGER_EVIDENCE_NAME = "paper-trigger-figure-role-pairing.json"
 SELECTIVE_APPLICATION_INJECTIONS = {
     "curl": ("focaccia_injection_curl_2175", "CF"),
     "lua": ("focaccia_injection_lua_2495", "R8"),
@@ -114,7 +118,7 @@ BUG_STUDY_MISTRANSLATION_COLORS = (
     "#ECFF99",
     "#FF9999",
 )
-BUG_STUDY_MISTRANSLATION_HATCHES = ("//", "\\\\", "oo", "OO", "xx", "**")
+BUG_STUDY_MISTRANSLATION_HATCHES = ("/", "\\", "o", "O", "x", "*")
 
 
 class Measurements:
@@ -289,13 +293,13 @@ def load_reproducer_sizes(path: Path | None) -> dict[str, tuple[float, float]]:
 def _configure_matplotlib() -> None:
     plt.rcParams.update(
         {
-            "font.family": "Linux Libertine O",
+            "font.family": "Times New Roman",
             "font.size": 9,
             "axes.titlesize": 9,
             "axes.labelsize": 9,
-            "xtick.labelsize": 8,
-            "ytick.labelsize": 8,
-            "legend.fontsize": 8,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "legend.fontsize": 9,
             "pdf.fonttype": 42,
         }
     )
@@ -1430,122 +1434,205 @@ def _cross_isa_selective_application_measurements(
     }
 
 
-def _save(fig: plt.Figure, output: Path, name: str) -> Path:
+def _save(
+    fig: plt.Figure,
+    output: Path,
+    name: str,
+    *,
+    bbox_tight: bool = True,
+    pad_inches: float | None = None,
+) -> Path:
     destination = output / name
-    fig.savefig(destination, bbox_inches="tight", metadata=FIXED_METADATA)
+    save_options: dict[str, object] = {
+        "bbox_inches": "tight" if bbox_tight else None,
+        "metadata": FIXED_METADATA,
+    }
+    if pad_inches is not None:
+        save_options["pad_inches"] = pad_inches
+    fig.savefig(destination, **save_options)
     plt.close(fig)
     return destination
+
+
+def combine_paper_trigger_measurements(
+    host_measurements: dict[str, Measurements],
+) -> tuple[Measurements, dict[str, object]]:
+    """Assemble Figure 6's case sequence without merging any case across hosts."""
+    component_names = ("concrete", "symbolic", "validation")
+    qemu_names = ("execution", "tracing", "validation")
+    rows: list[dict[str, str]] = []
+    case_hosts: dict[str, str] = {}
+    for _, benchmarks in TRIGGER_GROUPS:
+        for benchmark in benchmarks:
+            candidates = []
+            for system, data in host_measurements.items():
+                mode = data.qemu_mode(benchmark, qemu_names)
+                if (
+                    data.get(benchmark, "native", "execution") is not None
+                    and data.components(
+                        benchmark, "native-cross-validated", component_names
+                    )
+                    is not None
+                    and mode is not None
+                    and data.components(benchmark, mode, qemu_names) is not None
+                ):
+                    candidates.append((system, data, mode))
+            if len(candidates) != 1:
+                raise EvaluationError(
+                    f"Figure 6 case {benchmark} has {len(candidates)} complete host roles; expected exactly one."
+                )
+            system, data, qemu_mode = candidates[0]
+            case_hosts[benchmark] = system
+            for (row_benchmark, mode, component), seconds in data.values.items():
+                if row_benchmark == benchmark and mode in {
+                    "native",
+                    "native-cross-validated",
+                    qemu_mode,
+                }:
+                    rows.append(
+                        {
+                            "benchmark": benchmark,
+                            "mode": mode,
+                            "component": component,
+                            "seconds": str(seconds),
+                            "status": "passed",
+                            "system": system,
+                        }
+                    )
+    return Measurements(rows), {
+        "schema": "focaccia-paper-trigger-figure-role-pair-v1",
+        "figure": "split-overhead-breakdown.pdf",
+        "caseOrder": [
+            benchmark for _, benchmarks in TRIGGER_GROUPS for benchmark in benchmarks
+        ],
+        "caseSystems": case_hosts,
+    }
 
 
 def plot_trigger_overhead(data: Measurements, output: Path) -> Path | None:
     component_names = ("concrete", "symbolic", "validation")
     qemu_names = ("execution", "tracing", "validation")
-    grouped: list[
-        tuple[str, list[str], list[tuple[float, ...]], list[tuple[float, ...]]]
-    ] = []
-    omitted: list[str] = []
-
+    groups: dict[str, list[str]] = {}
+    native: dict[str, list[tuple[float, ...]]] = {}
+    qemu: dict[str, list[tuple[float, ...]]] = {}
+    omitted = []
     for category, benchmarks in TRIGGER_GROUPS:
-        labels: list[str] = []
-        native_rows: list[tuple[float, ...]] = []
-        qemu_rows: list[tuple[float, ...]] = []
+        groups[category] = []
+        native[category] = []
+        qemu[category] = []
         for benchmark in benchmarks:
             baseline = data.get(benchmark, "native", "execution")
-            native = data.components(
+            native_row = data.components(
                 benchmark, "native-cross-validated", component_names
             )
-            qemu_mode = data.qemu_mode(benchmark, qemu_names)
+            mode = data.qemu_mode(benchmark, qemu_names)
             qemu_profile = (
-                data.components(benchmark, qemu_mode, qemu_names)
-                if qemu_mode is not None
-                else None
+                data.components(benchmark, mode, qemu_names) if mode else None
             )
-            qemu = (
-                (qemu_profile[0] + qemu_profile[1], 0.0, qemu_profile[2])
-                if qemu_profile is not None
-                else None
-            )
-            if baseline is None or baseline <= 0 or native is None or qemu is None:
+            if (
+                baseline is None
+                or baseline <= 0
+                or native_row is None
+                or qemu_profile is None
+            ):
                 omitted.append(benchmark)
                 continue
-            labels.append(f"#{benchmark}")
-            native_rows.append(tuple(value / baseline for value in native))
-            qemu_rows.append(tuple(value / baseline for value in qemu))
-        if labels:
-            grouped.append((category, labels, native_rows, qemu_rows))
-
+            groups[category].append(benchmark)
+            native[category].append(tuple(value / baseline for value in native_row))
+            qemu[category].append(
+                (
+                    (qemu_profile[0] + qemu_profile[1]) / baseline,
+                    0,
+                    qemu_profile[2] / baseline,
+                )
+            )
     if omitted:
         _warn(f"trigger overhead omits incomplete cases: {', '.join(omitted)}")
-    if not grouped:
-        _warn(
-            "not generating split-overhead-breakdown.pdf: no complete trigger samples"
-        )
+    if not all(groups.values()):
+        _warn("not generating split-overhead-breakdown.pdf: paper grid is incomplete")
         return None
 
-    widths = [max(len(labels), 0.35) for _, labels, _, _ in grouped]
-    figure = plt.figure(figsize=(PAPER_TWO_COLUMN[0], 1.5))
-    grid = GridSpec(2, len(grouped), width_ratios=widths, figure=figure)
-    native_axes: list[plt.Axes] = []
-    qemu_axes: list[plt.Axes] = []
-    legend_labels = ("Concrete", "Symbolic", "Validation")
-    paper_hatches = ("\\", "x", "O")
-    all_native = [sum(row) for _, _, rows, _ in grouped for row in rows]
-    all_qemu = [sum(row) for _, _, _, rows in grouped for row in rows]
-    native_limit = max(all_native) * 1.08
-    qemu_limit = max(all_qemu) * 1.08
-    handles: list[object] = []
-
-    for column, (category, labels, native_rows, qemu_rows) in enumerate(grouped):
-        native_axis = figure.add_subplot(grid[0, column])
-        qemu_axis = figure.add_subplot(grid[1, column])
-        native_axes.append(native_axis)
-        qemu_axes.append(qemu_axis)
-        for axis in (native_axis, qemu_axis):
-            axis.spines[["top", "right"]].set_visible(False)
-        if column:
-            for axis in (native_axis, qemu_axis):
-                axis.spines["left"].set_visible(False)
-                axis.set_yticks([])
-
-        for axis, rows in ((native_axis, native_rows), (qemu_axis, qemu_rows)):
-            values = np.asarray(rows)
-            positions = np.arange(len(labels))
-            bottom = np.zeros(len(labels))
-            for index, legend_label in enumerate(legend_labels):
-                bars = axis.bar(
-                    positions,
-                    values[:, index],
-                    bottom=bottom,
-                    width=0.4,
-                    color=COLORS[index],
-                    edgecolor="black",
-                    linewidth=0.6,
-                    hatch=paper_hatches[index],
-                    label=legend_label,
-                )
-                if column == 0 and axis is native_axis:
-                    handles.append(bars)
-                bottom += values[:, index]
-
-        native_axis.set_ylim(0, native_limit)
-        native_axis.set_xticks([])
-        qemu_axis.set_ylim(0, qemu_limit)
-        qemu_axis.set_xticks(np.arange(len(labels)), labels, fontsize=7)
-        qemu_axis.set_xlabel(category)
-
-    figure.supylabel("Overhead", x=0.01, y=0.58)
-    figure.text(0.045, 0.78, "Native", rotation=90, va="center", ha="center")
-    figure.text(0.045, 0.37, "QEMU", rotation=90, va="center", ha="center")
-    figure.legend(
-        handles,
-        legend_labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.09),
-        ncol=3,
-        frameon=False,
+    bar_width = 0.4
+    fig = plt.figure(figsize=(PAPER_TWO_COLUMN_WIDTH, 1.5))
+    gridspec = GridSpec(
+        nrows=2, ncols=5, width_ratios=[2, 2, 2, 0.35, 0.35], figure=fig
     )
-    figure.tight_layout()
-    return _save(figure, output, "split-overhead-breakdown.pdf")
+    nat_ax = []
+    for c, (cat, benchmarks) in enumerate(groups.items()):
+        axis = fig.add_subplot(gridspec[0, c])
+        axis.spines["top"].set_visible(False)
+        axis.spines["right"].set_visible(False)
+        axis.set_xticks([])
+        axis.set_xticklabels([])
+        if c > 0:
+            axis.spines["left"].set_visible(False)
+            axis.set_xticks([])
+            axis.set_xticklabels([])
+            axis.set_yticks([])
+            axis.set_yticklabels([])
+        nat_ax.append(axis)
+    ax = []
+    for c, (cat, benchmarks) in enumerate(groups.items()):
+        axis = fig.add_subplot(gridspec[1, c])
+        axis.spines["top"].set_visible(False)
+        axis.spines["right"].set_visible(False)
+        loc = range(len(benchmarks))
+        axis.set_xticks(loc)
+        axis.set_xticklabels([f"#{benchmark}" for benchmark in benchmarks])
+        axis.set_xlabel(cat)
+        if c > 0:
+            axis.spines["left"].set_visible(False)
+            axis.set_yticks([])
+            axis.set_yticklabels([])
+        ax.append(axis)
+    handles = {}
+    for i, (group, programs) in enumerate(groups.items()):
+        for xpos, values in enumerate(native[group]):
+            next_sep = 0
+            for label, value, color, hatch in zip(
+                ("Concrete", "Symbolic", "Validation"), values, COLORS, ("\\", "x", "O")
+            ):
+                h = nat_ax[i].bar(
+                    xpos,
+                    value,
+                    width=bar_width,
+                    bottom=next_sep,
+                    color=color,
+                    hatch=hatch,
+                    edgecolor="black",
+                )
+                next_sep += value
+                handles.setdefault(label, h)
+    for i, (group, programs) in enumerate(groups.items()):
+        for xpos, values in enumerate(qemu[group]):
+            next_sep = 0
+            for label, value, color, hatch in zip(
+                ("Concrete", "Symbolic", "Validation"), values, COLORS, ("\\", "x", "O")
+            ):
+                ax[i].bar(
+                    xpos,
+                    value,
+                    width=bar_width,
+                    bottom=next_sep,
+                    color=color,
+                    hatch=hatch,
+                    edgecolor="black",
+                )
+                next_sep += value
+    fig.supylabel("Overhead", x=0.01, y=0.6, va="center")
+    fig.legend(
+        handles.values(),
+        handles.keys(),
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.1),
+        ncol=5,
+        frameon=False,
+        alignment="center",
+    )
+    fig.text(0.045, 0.8, "Native", rotation=90, va="center", ha="center")
+    fig.text(0.045, 0.42, "QEMU", rotation=90, va="center", ha="center")
+    fig.tight_layout()
+    return _save(fig, output, "split-overhead-breakdown.pdf")
 
 
 def plot_selective_applications(data: Measurements, output: Path) -> Path | None:
@@ -1572,7 +1659,9 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
         if native is None or qemu is None:
             omitted.append(application)
             continue
-        applications.append(application.capitalize())
+        applications.append(
+            "SQLite" if application == "sqlite" else application.capitalize()
+        )
         native_rows.append(tuple(value / 60 for value in native))
         qemu_rows.append(tuple(value / 60 for value in qemu))
 
@@ -1596,7 +1685,7 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
     labels = ("Concrete", "Symbolic", "Validation")
     handles: list[object] = []
     all_rows = native_rows + qemu_rows
-    maximum = max(sum(row) for row in all_rows) * 1.1
+    maximum = max(max(row) for row in all_rows) * 1.1
 
     for mode_index, rows in enumerate((native_rows, qemu_rows)):
         for application_index, (application, values) in enumerate(
@@ -1613,7 +1702,6 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
                     height=0.25,
                     color=COLORS[component_index],
                     edgecolor="black",
-                    linewidth=0.6,
                     hatch=hatches[component_index],
                 )
                 if axis_index == 0:
@@ -1637,7 +1725,7 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
         axis.tick_params(axis="x", length=0, labelbottom=False)
 
     figure.text(0.02, 0.74, "Native", rotation=90, va="center", ha="center")
-    figure.text(0.02, 0.36, "QEMU", rotation=90, va="center", ha="center")
+    figure.text(0.02, 0.42, "QEMU", rotation=90, va="center", ha="center")
     axes[0].legend(
         handles,
         labels,
@@ -1663,7 +1751,12 @@ def plot_selective_applications(data: Measurements, output: Path) -> Path | None
         )
     )
     figure.tight_layout()
-    return _save(figure, output, "realworld-split-overhead-breakdown.pdf")
+    return _save(
+        figure,
+        output,
+        "realworld-split-overhead-breakdown.pdf",
+        bbox_tight=False,
+    )
 
 
 def application_trend_ratios(
@@ -1740,15 +1833,11 @@ def plot_full_curl(data: Measurements, output: Path) -> Path | None:
 
     rows = np.asarray((cross_validated, speculative, qemu)) / 60
     labels = ("Cross\nValidated", "Speculative", "QEMU")
-    components = (
-        "Concrete (exclusive)",
-        "Symbolic (exclusive)",
-        "Validation (exclusive)",
-    )
+    components = ("Concrete", "Symbolic", "Validation")
     hatches = ("\\", "x", "O")
     figure, axes = plt.subplots(3, figsize=(PAPER_ONE_COLUMN[0], 1.55), sharex=True)
     handles: list[object] = []
-    maximum = max(sum(row) for row in rows) * 1.1
+    maximum = max(value for row in rows for value in row) * 1.1
 
     for row_index, (axis, label, values) in enumerate(zip(axes, labels, rows)):
         left = 0.0
@@ -1760,26 +1849,18 @@ def plot_full_curl(data: Measurements, output: Path) -> Path | None:
                 height=0.22,
                 color=COLORS[component_index],
                 edgecolor="black",
-                linewidth=0.6,
                 hatch=hatches[component_index],
             )
             if row_index == 0:
                 handles.append(bars[0])
             left += value
-        mode = (
-            "native-full-cross-validated",
-            "native-full-speculative",
-            qemu_mode,
-        )[row_index]
-        wall = data.get("curl-full", mode, "capture" if row_index < 2 else "total")
-        suffix = f"; end-to-end {wall / 60:.2f}" if wall is not None else ""
         axis.text(
             left,
             0,
-            f" {left:.2f} exclusive{suffix}",
+            f" {int(left)}",
             va="center",
             ha="left",
-            fontsize=7,
+            fontsize=8,
         )
         axis.set_ylabel(label, fontsize=8, rotation=0, va="center", ha="right")
         axis.set_yticks([])
@@ -1817,7 +1898,7 @@ def plot_full_curl(data: Measurements, output: Path) -> Path | None:
         )
     )
     figure.tight_layout()
-    return _save(figure, output, "tracing-comparison.pdf")
+    return _save(figure, output, "tracing-comparison.pdf", bbox_tight=False)
 
 
 def plot_reproducer_sizes(
@@ -1858,7 +1939,7 @@ def plot_reproducer_sizes(
         gridspec_kw={"width_ratios": [count for _, count in populated]},
     )
     axes = axes_value[0]
-    maximum = max(50.0, max(max(values) for _, _, values in available) * 1.15)
+    maximum = 50.0
     for axis_index, (category, _) in enumerate(populated):
         axis = axes[axis_index]
         category_rows = [item for item in available if item[0] == category]
@@ -1868,11 +1949,10 @@ def plot_reproducer_sizes(
         width = 0.35
         axis.bar(
             x - width / 2,
-            guest,
+            np.clip(guest, None, maximum - 1),
             width,
             color=COLORS[0],
             edgecolor="black",
-            linewidth=0.6,
             hatch="/",
         )
         axis.bar(
@@ -1881,17 +1961,15 @@ def plot_reproducer_sizes(
             width,
             color=COLORS[1],
             edgecolor="black",
-            linewidth=0.6,
             hatch="o",
         )
         for position, value in zip(x - width / 2, guest):
             axis.text(
                 position,
-                value,
-                f"{value:.1f}",
+                min(value + 0.4, maximum - 0.4),
+                f"{value:.0f}",
                 ha="center",
                 va="bottom",
-                fontsize=7,
             )
         axis.set_xticks(
             x,
@@ -1901,6 +1979,7 @@ def plot_reproducer_sizes(
             ],
         )
         axis.set_xlabel(category)
+        axis.tick_params(axis="x", pad=0)
         axis.set_ylim(0, maximum)
         axis.spines[["top", "right"]].set_visible(False)
         if axis_index:
@@ -1929,7 +2008,7 @@ def plot_reproducer_sizes(
         frameon=False,
     )
     fig.tight_layout()
-    return _save(fig, output, "reproducer-code-size.pdf")
+    return _save(fig, output, "reproducer-code-size.pdf", pad_inches=0)
 
 
 def _plot_bug_study_bar(
@@ -1950,7 +2029,6 @@ def _plot_bug_study_bar(
             left=cumulative[index],
             color=color,
             edgecolor="black",
-            linewidth=0.6,
             height=0.22,
             hatch=hatch,
         )[0]
@@ -1963,11 +2041,16 @@ def _plot_bug_study_bar(
             ha="center",
             color="black",
             fontweight="bold",
-            fontsize=9,
+            fontsize=14,
         )
     axis.set_xlim(0, sum(sizes))
     axis.set_ylabel(
-        emulator, rotation=0, va="center", ha="right", multialignment="left"
+        emulator,
+        fontsize=12,
+        rotation=0,
+        va="center",
+        ha="right",
+        multialignment="left",
     )
     axis.set_yticks([])
     axis.set_xticks([])
@@ -1977,13 +2060,13 @@ def _plot_bug_study_bar(
 
 def plot_combined_bug_study(output: Path) -> Path:
     """Plot the paper's fixed, manually reviewed bug-study percentages."""
-    fig = plt.figure(figsize=(PAPER_TWO_COLUMN[0], 3.3))
+    fig = plt.figure(figsize=(PAPER_TWO_COLUMN_WIDTH, 3.3))
     grid = fig.add_gridspec(4, 2, width_ratios=(1, 30))
     box64_axis = fig.add_subplot(grid[0, :])
     qemu_axis = fig.add_subplot(grid[1, :])
     breakdown_axis = fig.add_subplot(grid[2, 1:])
 
-    error_hatches = ("\\\\", "OO", "xx")
+    error_hatches = ("\\", "x", "O")
     box64_bars = _plot_bug_study_bar(
         box64_axis,
         BUG_STUDY_BOX64,
@@ -2000,11 +2083,16 @@ def plot_combined_bug_study(output: Path) -> Path:
         error_hatches,
         labels_above=True,
     )
+    mistranslation_index = 1
+    mistranslation_colors = (
+        sns.light_palette(COLORS[mistranslation_index], n_colors=4)
+        + sns.dark_palette(COLORS[mistranslation_index], n_colors=4, reverse=True)[1:]
+    )
     breakdown_bars = _plot_bug_study_bar(
         breakdown_axis,
         BUG_STUDY_QEMU_MISTRANSLATIONS,
         "QEMU\nmistranslation\nbreakdown",
-        BUG_STUDY_MISTRANSLATION_COLORS,
+        mistranslation_colors,
         BUG_STUDY_MISTRANSLATION_HATCHES,
         labels_above=False,
     )
@@ -2017,7 +2105,9 @@ def plot_combined_bug_study(output: Path) -> Path:
         bbox_transform=fig.transFigure,
         ncol=3,
         frameon=False,
+        fontsize=12,
     )
+    fig.tight_layout()
     breakdown_axis.legend(
         breakdown_bars,
         BUG_STUDY_MISTRANSLATION_LABELS,
@@ -2026,9 +2116,9 @@ def plot_combined_bug_study(output: Path) -> Path:
         bbox_transform=fig.transFigure,
         ncol=3,
         frameon=False,
+        fontsize=12,
     )
 
-    mistranslation_index = 1
     qemu_mistranslations = qemu_bars[mistranslation_index]
     first_breakdown = breakdown_bars[0]
     final_breakdown = breakdown_bars[-1]
@@ -2041,7 +2131,7 @@ def plot_combined_bug_study(output: Path) -> Path:
         ),
         coordsB=breakdown_axis.transData,
         color="black",
-        linewidth=1,
+        linewidth=2,
         linestyle="--",
     )
     right_connection = ConnectionPatch(
@@ -2056,13 +2146,13 @@ def plot_combined_bug_study(output: Path) -> Path:
         ),
         coordsB=breakdown_axis.transData,
         color="black",
-        linewidth=1,
+        linewidth=2,
         linestyle="--",
     )
     fig.add_artist(left_connection)
     fig.add_artist(right_connection)
-    fig.subplots_adjust(left=0.12, right=0.98, top=0.86, bottom=0.24, hspace=0.38)
-    return _save(fig, output, "combined-bug-study.pdf")
+    fig.tight_layout()
+    return _save(fig, output, "combined-bug-study.pdf", bbox_tight=False)
 
 
 def write_timing_accounting(data: Measurements, output: Path) -> Path:
@@ -2177,6 +2267,7 @@ def _generate_figures(
         ACCOUNTING_NAME,
         MULTI_HOST_FULL_CURL_EVIDENCE_NAME,
         MULTI_HOST_SELECTIVE_EVIDENCE_NAME,
+        MULTI_HOST_TRIGGER_EVIDENCE_NAME,
     ):
         (output / name).unlink(missing_ok=True)
     generated = [
@@ -2207,6 +2298,7 @@ def main() -> int:
     (output / MULTI_HOST_SUMMARY_NAME).unlink(missing_ok=True)
     (output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME).unlink(missing_ok=True)
     (output / MULTI_HOST_SELECTIVE_EVIDENCE_NAME).unlink(missing_ok=True)
+    (output / MULTI_HOST_TRIGGER_EVIDENCE_NAME).unlink(missing_ok=True)
     systems = evidence_systems(args.input)
     _configure_matplotlib()
     sizes = load_reproducer_sizes(args.reproducer_sizes)
@@ -2228,6 +2320,7 @@ def main() -> int:
             (output / name).unlink(missing_ok=True)
         (output / MULTI_HOST_FULL_CURL_EVIDENCE_NAME).unlink(missing_ok=True)
         (output / MULTI_HOST_SELECTIVE_EVIDENCE_NAME).unlink(missing_ok=True)
+        (output / MULTI_HOST_TRIGGER_EVIDENCE_NAME).unlink(missing_ok=True)
         host_measurements: dict[str, Measurements] = {}
         for system in systems:
             measurements = load_measurements(
@@ -2237,6 +2330,30 @@ def main() -> int:
             host_generated = _generate_figures(measurements, output / system, sizes)
             generated.extend(host_generated)
             summary[system] = [path.name for path in host_generated]
+
+        trigger_role: dict[str, object] = {"status": "not-applicable"}
+        try:
+            trigger_data, trigger_evidence = combine_paper_trigger_measurements(
+                host_measurements
+            )
+            trigger_figure = plot_trigger_overhead(trigger_data, output)
+            if trigger_figure is None:
+                raise EvaluationError("paper trigger components are incomplete")
+            trigger_evidence["figureSha256"] = _sha256(trigger_figure)
+            trigger_evidence_path = output / MULTI_HOST_TRIGGER_EVIDENCE_NAME
+            trigger_evidence_path.write_text(
+                json.dumps(trigger_evidence, indent=2, sort_keys=True) + "\n"
+            )
+            trigger_role = {
+                "status": "passed",
+                "figure": trigger_figure.name,
+                "evidence": trigger_evidence_path.name,
+                "evidenceSha256": _sha256(trigger_evidence_path),
+            }
+            generated.extend((trigger_figure, trigger_evidence_path))
+        except (EvaluationError, OSError, ValueError) as error:
+            _warn(f"not generating combined paper trigger figure: {error}")
+            trigger_role = {"status": "omitted", "reason": str(error)}
 
         cross_role: dict[str, object] = {"status": "not-applicable"}
         selective_role: dict[str, object] = {"status": "not-applicable"}
@@ -2319,6 +2436,7 @@ def main() -> int:
                     "schema": "focaccia-multi-host-plot-summary-v2",
                     "hosts": summary,
                     "crossRolePlots": {
+                        "paper-trigger-overhead": trigger_role,
                         "curl-full": cross_role,
                         "selective-applications": selective_role,
                     },

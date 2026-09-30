@@ -18,16 +18,19 @@ class ReproducerSizePlotTests(unittest.TestCase):
     def tearDown(self):
         plt.close("all")
 
-    def test_large_guest_and_minimized_sizes_are_not_clipped(self):
-        sizes = {"sqlite": (1600.0, 120.0), "1370": (80.0, 65.0)}
+    def test_large_guest_sizes_use_the_paper_clipped_axis_with_exact_annotations(self):
+        sizes = {"sqlite": (1600.0, 12.0), "1370": (80.0, 6.5)}
         with patch.object(plots, "_save") as save:
             plots.plot_reproducer_sizes(sizes, Path("unused"))
         figure = save.call_args.args[0]
         self.assertEqual(len(figure.axes), 2)
         for axis, expected in zip(figure.axes, sizes.values()):
-            self.assertEqual([bar.get_height() for bar in axis.patches], list(expected))
-            self.assertGreater(axis.get_ylim()[1], max(expected))
-            self.assertEqual(axis.texts[0].get_position()[1], expected[0])
+            self.assertEqual(
+                [bar.get_height() for bar in axis.patches], [49.0, expected[1]]
+            )
+            self.assertEqual(axis.get_ylim(), (0.0, 50.0))
+            self.assertEqual(axis.texts[0].get_text(), f"{expected[0]:g}")
+            self.assertEqual(axis.texts[0].get_position()[1], 49.6)
         self.assertEqual(figure.axes[0].get_ylim(), figure.axes[1].get_ylim())
 
     def test_small_sizes_retain_paper_scale(self):
@@ -41,6 +44,115 @@ class ReproducerSizePlotTests(unittest.TestCase):
         with patch.object(plots, "_save") as save:
             self.assertIsNone(plots.plot_reproducer_sizes({}, Path("unused")))
         save.assert_not_called()
+
+
+class PaperFigureVisualContractTests(unittest.TestCase):
+    def tearDown(self):
+        plt.close("all")
+
+    @staticmethod
+    def complete_trigger_data():
+        rows = []
+        for _, benchmarks in plots.TRIGGER_GROUPS:
+            for benchmark in benchmarks:
+                for mode, names, values in (
+                    ("native", ("execution",), (1,)),
+                    (
+                        "native-cross-validated",
+                        ("concrete", "symbolic", "validation"),
+                        (2, 3, 4),
+                    ),
+                    ("qemu-paper", ("execution", "tracing", "validation"), (1, 5, 2)),
+                ):
+                    for component, seconds in zip(names, values):
+                        rows.append(
+                            {
+                                "benchmark": benchmark,
+                                "mode": mode,
+                                "component": component,
+                                "seconds": str(seconds),
+                                "status": "passed",
+                                "system": "paper-host",
+                            }
+                        )
+        return plots.Measurements(rows)
+
+    def test_figure_6_artist_contract_and_complete_paper_case_order(self):
+        plots._configure_matplotlib()
+        with patch.object(plots, "_save") as save:
+            plots.plot_trigger_overhead(self.complete_trigger_data(), Path("unused"))
+        figure = save.call_args.args[0]
+        self.assertEqual(tuple(figure.get_size_inches()), (7.0, 1.5))
+        self.assertEqual(plt.rcParams["font.family"], ["Times New Roman"])
+        self.assertEqual(len(figure.axes), 10)
+        self.assertEqual(
+            [
+                label.get_text()
+                for axis in figure.axes[5:]
+                for label in axis.get_xticklabels()
+            ],
+            [f"#{case}" for _, cases in plots.TRIGGER_GROUPS for case in cases],
+        )
+        self.assertEqual(
+            [axis.get_xlabel() for axis in figure.axes[5:]],
+            [group for group, _ in plots.TRIGGER_GROUPS],
+        )
+        self.assertEqual(
+            [text.get_text() for text in figure.legends[0].get_texts()],
+            ["Concrete", "Symbolic", "Validation"],
+        )
+        self.assertEqual(
+            [
+                container.patches[0].get_hatch()
+                for container in figure.axes[0].containers
+            ],
+            ["\\", "x", "O"] * 3,
+        )
+
+    def test_figures_7_8_9_match_paper_dimensions_labels_and_ticks(self):
+        rows = []
+        for mode, values in (
+            ("native-full-cross-validated", (28 * 60, 9 * 60, 60)),
+            ("native-full-speculative", (4 * 60, 9 * 60, 0)),
+            ("qemu-paper", (28 * 60, 0, 3.15 * 60)),
+        ):
+            names = (
+                ("concrete", "symbolic", "validation")
+                if mode.startswith("native")
+                else ("execution", "tracing", "validation")
+            )
+            for name, value in zip(names, values):
+                rows.append(
+                    {
+                        "benchmark": "curl-full",
+                        "mode": mode,
+                        "component": name,
+                        "seconds": str(value),
+                        "status": "passed",
+                        "system": "paper-host",
+                    }
+                )
+        with patch.object(plots, "_save") as save:
+            plots.plot_full_curl(plots.Measurements(rows), Path("unused"))
+        curl = save.call_args.args[0]
+        self.assertEqual(tuple(curl.get_size_inches()), (3.335, 1.55))
+        self.assertEqual(
+            [text.get_text() for text in curl.axes[0].get_legend().get_texts()],
+            ["Concrete", "Symbolic", "Validation"],
+        )
+        self.assertEqual(curl.axes[-1].xaxis.get_major_locator()._edge.step, 10)
+
+        with patch.object(plots, "_save") as save:
+            plots.plot_combined_bug_study(Path("unused"))
+        bug = save.call_args.args[0]
+        self.assertEqual(tuple(bug.get_size_inches()), (7.0, 3.3))
+        self.assertEqual(
+            [text.get_text() for text in bug.axes[0].get_legend().get_texts()],
+            list(plots.BUG_STUDY_ERROR_LABELS),
+        )
+        self.assertTrue(
+            all(text.get_fontsize() == 14 for axis in bug.axes for text in axis.texts)
+        )
 
 
 class ApplicationTrendPlotTests(unittest.TestCase):

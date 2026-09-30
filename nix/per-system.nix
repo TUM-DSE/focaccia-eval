@@ -1120,6 +1120,7 @@ in
       cross-isa-selective-application-role-pairing = plotOutputs.crossIsaSelectiveApplicationRolePairingCheck;
       exclusive-and-end-to-end-timing-accounting = plotOutputs.timingAccountingCheck;
       application-trend-ratio-normalization = plotOutputs.applicationTrendRatiosCheck;
+      paper-figure-visual-contract = plotOutputs.paperFigureVisualContractCheck;
       nix-plot-font-discovery = plotOutputs.fontDiscoveryCheck;
       provenance-bound-reproducer-sizes = evaluationPlots;
       rr-build = focaccia.packages.${system}.rr;
