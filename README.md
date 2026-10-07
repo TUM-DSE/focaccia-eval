@@ -27,6 +27,25 @@ Docker selects the matching architecture. The image contains the runtime depende
 docker run --rm "$IMAGE" evaluate-native --help
 ```
 
+## Smoke test
+
+On x86-64, capture case 1372; on AArch64, use case 2248 instead:
+
+```bash
+docker run --rm --privileged --security-opt seccomp=unconfined \
+  -v "$PWD/runs:/artifacts" "$IMAGE" \
+  evaluate-native --output /artifacts/smoke --case 1372
+```
+
+Transfer the results to the opposite host. On AArch64, validate 1372; on x86-64, replace `evaluate-qemu-1372` with `evaluate-qemu-2248`:
+
+```bash
+docker run --rm -v "$PWD/runs:/artifacts" "$IMAGE" \
+  evaluate-qemu-1372 --input /artifacts/smoke
+```
+
+Successful validation exits zero after detecting and localizing the expected bug.
+
 ## Run the evaluation
 
 Run phases sequentially, making each phase's results available on both hosts before proceeding.
