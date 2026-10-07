@@ -1,212 +1,99 @@
-# Focaccia Reproducers
+# Focaccia evaluation artifact
 
-This repository provides the reproducible evaluation corpus for the 17 mistranslation cases in Table 2 of *Veritas: Semantic Validation for CPU Emulators*. It also packages the historical emulators, application workloads, evaluation programs, plotting tools, and provenance records used by the study.
+This repository provides the evaluation artifact for *Veritas: Semantic Validation for CPU Emulators*: the 17 historical mistranslation cases, SQLite/Curl/Lua workloads, pinned emulators, reproducer generation, and paper plotting tools. [Focaccia](https://github.com/TUM-DSE/focaccia) provides tracing and semantic validation.
 
-Focaccia is consumed from the pinned `main` revision and remains responsible for tracing and semantic validation. This repository owns the evaluation inputs and emulator provenance.
+## Requirements
 
-## Scope
+- Docker on **two physical Linux hosts: x86-64 and AArch64**. Each host records its own native oracles; the emulator under test never generates its own correctness oracle.
+- Native collection requires privileged debugger/perf access and supported recording hardware. x86-64 RR application capture requires a compatible PMU; native AArch64 recording requires an RR-supported processor, such as Arm Neoverse.
+- Approximately **5 GB of image downloads per host**, plus space for unpacked images and generated results.
+- Allow several hours for a complete campaign.
 
-The repository includes the following components.
+Use one shared results directory, or copy its complete contents between hosts after each phase. Preserve the relative layout and do not mix unrelated runs. A single host without the other architecture's native oracles cannot complete the campaign.
 
-- All 17 Table 2 cases, including separate register and memory CMPXCHG witnesses for Box64 and QEMU.
-- Static non-PIE x86-64 and AArch64 guest binaries.
-- Reproducible GCC 14.2.1 and Musl 1.2.5 cross-compilation through Nix.
-- Explicit `focaccia_trace_start` and `focaccia_trace_stop` symbols.
-- Historical QEMU packages imported from matching pinned Nixpkgs revisions.
-- A trace-enabled Box64 0.3.8 package with the cited CMPXCHG regression and an unmodified reference package on AArch64.
-- Focaccia's pinned RR v85 tool on x86-64 and AArch64.
-- A generated and versioned trigger catalog.
-- A host-adaptive `evaluate-emulator` application that runs every applicable emulator stage. Lower-level QEMU and Box64 applications remain available for focused runs.
-- Source-pinned static x86-64 reference and injected builds of SQLite, Curl, and Lua.
-- Deterministic QEMU consumers for the three injected applications. These consumers verify RR effects, content-bound manifests, and recreated workload interfaces.
-- The Table 3 injection patches, deterministic workloads, and syscall-backed time shim.
-- Dedicated full-Curl native and QEMU measurement applications.
-- Paper-matching Figures 2 and 6–9 from evaluator results, metadata, hash-bound profiles, separately recorded reproducer sizes, and the paper's reviewed bug-study classification.
-- A clearly separate supplemental application trend-ratio comparison.
+## Get the Docker image
 
-The presence of a package establishes that its source, patches, build recipe, and historical Nixpkgs revision are pinned. It does not establish end-to-end detection by Focaccia. A behavior check is exposed only when the buggy emulator produces the expected diagnostic and a reviewed reference accepts the same oracle.
-
-## Development environment
-
-The included `.envrc` loads the default flake development shell through nix-direnv. Enable it once in each checkout.
+On both hosts:
 
 ```bash
-direnv allow
+export IMAGE=taugoust/focaccia-artifact
+docker pull "$IMAGE"
+mkdir -p runs
 ```
 
-The shell provides Focaccia, RR, Binutils, `jq`, and the plotting dependencies from the pinned flake inputs. The equivalent command without direnv is `nix develop`.
-
-## Build outputs
-
-Inspect the complete output set.
+Docker selects the matching architecture. The image contains the runtime dependencies; Nix is not required. Commands can be inspected with, for example:
 
 ```bash
-nix flake show
+docker run --rm "$IMAGE" evaluate-native --help
 ```
 
-Build the guest corpus for the current host.
+## Run the evaluation
+
+Run phases sequentially, making each phase's results available on both hosts before proceeding.
+
+### 1. Collect native evidence on both hosts
+
+Run once on each physical architecture:
 
 ```bash
-nix build -L .#corpus
+docker run --rm --privileged --security-opt seccomp=unconfined \
+  -v "$PWD/runs:/artifacts" "$IMAGE" \
+  evaluate-native --output /artifacts/evaluation-001
 ```
 
-Build one trigger.
+Then run the additional full-Curl collection **on x86-64 only**:
 
 ```bash
-nix build -L .#trigger-508
+docker run --rm --privileged --security-opt seccomp=unconfined \
+  -v "$PWD/runs:/artifacts" "$IMAGE" \
+  evaluate-native-curl-full --output /artifacts/evaluation-001
 ```
 
-On x86-64, build the reference and injected application binaries.
+### 2. Validate under emulation on both hosts
+
+After all native collection finishes, run once on each host:
 
 ```bash
-nix build -L .#application-sqlite .#application-sqlite-injected
-nix build -L .#application-curl .#application-curl-injected
-nix build -L .#application-lua .#application-lua-injected
-nix build -L .#application-workloads
+docker run --rm -v "$PWD/runs:/artifacts" "$IMAGE" \
+  evaluate-emulator --input /artifacts/evaluation-001
 ```
 
-The `application-injections` check verifies that all six binaries are static. It confirms each injected instruction in its intended function, confirms its absence from the reference build, and runs native smoke tests. These application packages are available only on x86-64 because the Table 3 injections contain x86-64 instructions.
+This selects the host's emulator stages. On AArch64 it also runs Box64, reproducers, and full-Curl QEMU validation. Missing or incompatible inputs fail explicitly. Independent stages continue after ordinary failures, but the aggregate command returns nonzero if any stage fails.
 
-Run the non-privileged checks supported by the current host.
+### 3. Generate the figures
+
+With results from both hosts available, run on either host:
 
 ```bash
-nix flake check -L
+docker run --rm -v "$PWD/runs:/artifacts" "$IMAGE" \
+  plot-evaluation --input /artifacts/evaluation-001 \
+  --reproducer-sizes /artifacts/evaluation-001/reproducers/x86_64-linux/reproducer-sizes.json
 ```
 
-## Docker artifact
+## Expected outputs
 
-Build and load the artifact image for the current Linux architecture.
+`runs/evaluation-001/` contains native oracles, validation reports, logs, profiles, metadata, and reproducers. Artifact hashes bind the evidence to its inputs. A successful historical-bug evaluation means the expected error was detected and localized—not that the mistranslated execution was accepted.
 
-```bash
-nix build -L .#docker-artifact
-nix run -L .#load-docker-artifact
-```
+The five paper figures are written under `figures/`:
 
-`docker-artifact` is a nix2container image descriptor, not a Docker archive, so
-passing `result` to `docker load` does not work. `load-docker-artifact` copies
-that descriptor and its closure to the local Docker daemon without constructing
-an additional archive.
+| Figure | File |
+| --- | --- |
+| Bug study | `combined-bug-study.pdf` |
+| Trigger overhead | `split-overhead-breakdown.pdf` |
+| Full-Curl tracing | `tracing-comparison.pdf` |
+| Reproducer size | `reproducer-code-size.pdf` |
+| Application overhead | `realworld-split-overhead-breakdown.pdf` |
 
-The image tag is `focaccia-artifact:<revision>`, or `focaccia-artifact:dirty` for an uncommitted tree. The x86-64 and AArch64 images use the same logical name but contain architecture-specific evaluation closures.
+Host-local views are under `figures/<system>/`; `multi-host-summary.json` indexes the outputs. Missing or invalid measurements are omitted with warnings, never replaced with zeros or paper runtime values. The bug-study figure uses the paper's fixed classification percentages, not fresh runtime measurements. `application-trend-ratios.pdf` is supplemental.
 
-Starting the image without a command opens Bash in `/artifacts`.
+Reference outcomes remain explicit: case 1375 has a shared reference finding, and case 1861404 has partial reference visibility. Neither establishes reference correctness. See the [detailed evaluation guide](evaluation/README.md) for classifications and evidence contracts.
 
-```bash
-docker run --rm -it \
-  -v "$PWD/artifacts:/artifacts" \
-  focaccia-artifact:<revision>
-```
+## Further documentation
 
-Evaluation programs are available directly through `PATH`. Native collection can be started as follows.
-
-```bash
-docker run --rm \
-  --privileged \
-  --security-opt seccomp=unconfined \
-  -v "$PWD/artifacts:/artifacts" \
-  focaccia-artifact:<revision> \
-  evaluate-native --output /artifacts/evaluation
-```
-
-The image also provides `evaluate-emulator`, `plot-evaluation`, the focused QEMU evaluators, and host-specific programs such as `evaluate-native-curl-full` and `evaluate-reproducers`. Nix is not required at runtime.
-
-Run an image only on a Docker host with the same physical ISA. Use the same host directory as the `/artifacts` bind mount on each machine; the evaluator records system, binary, oracle, workload, and revision identities and rejects incompatible or duplicate retained cases. Copying a shared run between hosts must preserve its contents and relative layout.
-
-Native collection requires debugger attachment, perf events, and personality control. x86-64 RR application capture also requires a compatible host PMU.
-
-## Historical emulators
-
-Invoke the RR version pinned by Focaccia on x86-64 or AArch64.
-
-```bash
-nix run .#rr -- --version
-```
-
-Native AArch64 recording requires an RR-supported microarchitecture such as Arm Neoverse. Building the package or running the version check does not demonstrate that native recording succeeded.
-
-Build a historical QEMU package with its user-mode binaries.
-
-```bash
-nix build -L .#qemu-6-1-0-user
-```
-
-Build the injected and reference Box64 0.3.8 packages on AArch64.
-
-```bash
-nix build -L .#box64-0-3-8 .#box64-0-3-8-reference
-```
-
-Both packages enable the register trace required by the paper backend. The injected package applies only the cited pre-fix CMPXCHG behavior. The reference package retains the release behavior. The following check requires the injected emulator to produce the confirmed mismatch and the reference emulator to accept the same oracle.
-
-```bash
-nix build -L .#checks.aarch64-linux.box64-cmpxchg-validation
-```
-
-Validate the injected Box64 case against a shared native-oracle directory.
-
-```bash
-nix run -L .#evaluate-box64 -- --input runs/evaluation-001 --case box64-508
-```
-
-The reference package is used only by the dedicated negative-control check.
-
-## Evaluation workflow
-
-The plotting implementation is maintained in `evaluation/plots.py`. The complete two-system workflow is documented in [`evaluation/README.md`](evaluation/README.md).
-
-Collect native evidence on each supported native system.
-
-```bash
-nix run .#evaluate-native -- --output runs/evaluation-001
-```
-
-After both hosts have produced the required native oracles, run the host-adaptive emulator workflow once on each host.
-
-```bash
-nix run -L .#evaluate-emulator -- --input runs/evaluation-001
-```
-
-The command selects closures and additional stages for the physical host. Its QEMU evaluator contains the 14 catalogued QEMU trigger cases plus the three selective application consumers; cases without compatible retained native input fail rather than becoming samples. On AArch64 the wrapper additionally runs the Figure 8 reproducer workflow, Box64, and full-Curl QEMU validation. The Figure 8 workflow currently publishes eight reproducers; its wider internal control executions are not a separate default paper-case count. Independent stages continue after an ordinary failure.
-
-Generate every figure supported by successful evidence in the run.
-
-```bash
-nix run .#plot-evaluation -- \
-  --input runs/evaluation-001 \
-  --reproducer-sizes runs/evaluation-001/reproducers/x86_64-linux/reproducer-sizes.json
-```
-
-PDF files are written to `runs/evaluation-001/figures` by default. The paper-matching outputs are `combined-bug-study.pdf` (Figure 2), `split-overhead-breakdown.pdf` (Figure 6), `tracing-comparison.pdf` (Figure 7), `reproducer-code-size.pdf` (Figure 8), and `realworld-split-overhead-breakdown.pdf` (Figure 9). Where the paper combines cases produced on different physical systems, the root figure follows the paper's case order while a companion JSON file retains each case's producing-system identity; measurements are never averaged or assembled across hosts. Host-local diagnostic views remain under `figures/<system>/`, with `figures/multi-host-summary.json` indexing all outputs.
-
-`application-trend-ratios.pdf` is supplemental. It compares paper and current QEMU/native ratios and is not a substitute for any paper figure. Missing, failed, or provenance-invalid measurements produce warnings and are omitted. They are never replaced with zeros or paper runtime values.
-
-`combined-bug-study.pdf` is the sole exception. It presents the fixed and manually reviewed QEMU and Box64 classification percentages from the paper and does not depend on runtime measurements.
-
-The `evaluation-plots` package and `data-driven-evaluation-plots` check use deterministic fixtures to verify the plotting interface. The named `paper-figure-visual-contract` check verifies figure dimensions, case/order labels, legends, hatches, axes, ticks, and complete Figure 6 case coverage. They are not paper measurements.
-
-## Catalog and architecture model
-
-Build and inspect the generated trigger catalog.
-
-```bash
-nix build .#trigger-catalog
-cat result/share/focaccia-reproducers/catalog.json
-```
-
-Guest binaries are cross-compiled reproducibly with `pkgsCross.musl64` for x86-64 and `pkgsCross.aarch64-multiplatform-musl` for AArch64.
-
-Cross-compilation creates only the guest binary. It does not replace native oracle collection. x86-64 oracles must be recorded on native x86-64 hardware, and AArch64 oracles must be recorded on native AArch64 hardware.
-
-The Nix `system` identifies the machine that builds or runs a derivation. Guest ISA, native-oracle ISA, and emulator-host ISA remain separate fields in the catalog.
+- [Evaluation guide](evaluation/README.md): individual stages, selective runs, evidence formats, and limitations.
+- [Development and technical reference](DEVELOPMENT.md): Nix builds/checks, historical emulators, architecture model, and provenance.
+- [Emulator bug study](https://github.com/TUM-DSE/emulator-bug-study): underlying classification data and analysis.
 
 ## License
 
-Focaccia Eval is distributed under the BSD 3-Clause license. See [`LICENSE`](LICENSE). Bundled fixtures and upstream components retain their own licenses.
-
-## Provenance
-
-Authoritative trigger, emulator, and paper-case declarations live in `nix/catalog.nix`. The remaining modules under `nix/` construct packages, checks, runners, plots, and Docker images from that catalog.
-
-Guest witnesses are curated from the paper and the original upstream reports. Historical QEMU packages are imported unchanged from exact Nixpkgs revisions. Box64 uses the pinned Nixpkgs recipe and 0.3.8 source revision. It enables upstream trace support with a shared Zydis decoder and exposes separate reference and regression-injected outputs. The injected patch restores only the cited pre-fix ARM64 CMPXCHG behavior. `emulator-bug-study/` is not a source or dependency of this repository.
-
-`flake.lock` pins the Focaccia revision, current toolchain, application sources, and each historical emulator package set. The trigger catalog records Nixpkgs and upstream emulator revisions. The application catalog records source revisions and injection points. Focaccia's `qemu-submodule` lock entry is used to build the validator plugin and is not a historical emulator input for this corpus.
+BSD 3-Clause; see [LICENSE](LICENSE). Bundled components retain their upstream licenses.
