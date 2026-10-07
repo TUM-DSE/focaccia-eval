@@ -105,8 +105,6 @@ The five paper figures are written under `figures/`:
 
 Host-local views are under `figures/<system>/`. `multi-host-summary.json` indexes the outputs. The bug-study figure uses the paper's classification percentages. `application-trend-ratios.pdf` is supplemental.
 
-Reference outcomes remain explicit: case 1375 has a shared reference finding, and case 1861404 has partial reference visibility. Neither establishes reference correctness. See the [detailed evaluation guide](evaluation/README.md) for classifications and evidence contracts.
-
 ## Further documentation
 
 - [Evaluation guide](evaluation/README.md): individual stages, selective runs, evidence formats, and limitations.
