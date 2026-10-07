@@ -67,4 +67,3 @@ If a stage fails, inspect its logs and validation report. Independent stages con
 ## Development
 
 - [Build and emulator reference](../DEVELOPMENT.md)
-- [Implementation details and evidence formats](REFERENCE.md)
