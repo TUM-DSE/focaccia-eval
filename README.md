@@ -24,15 +24,6 @@ The repository includes the following components.
 - Paper-matching Figures 2 and 6–9 from evaluator results, metadata, hash-bound profiles, separately recorded reproducer sizes, and the paper's reviewed bug-study classification.
 - A clearly separate supplemental application trend-ratio comparison.
 
-The following work remains outside the checked artifact.
-
-- Reviewed native oracle bundles for the remaining emulator cases.
-- Final component profiles for SQLite, Curl, and Lua under QEMU.
-- Final full-Curl cross-validated, speculative, and QEMU measurements.
-- Remaining QEMU emulated cases.
-- Final aggregate capture across both native systems.
-- Behavior-specific checks for the remaining emulator and application cases.
-
 The presence of a package establishes that its source, patches, build recipe, and historical Nixpkgs revision are pinned. It does not establish end-to-end detection by Focaccia. A behavior check is exposed only when the buggy emulator produces the expected diagnostic and a reviewed reference accepts the same oracle.
 
 ## Development environment
