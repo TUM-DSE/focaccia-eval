@@ -103,7 +103,7 @@ The five paper figures are written under `figures/`:
 | Reproducer size | `reproducer-code-size.pdf` |
 | Application overhead | `realworld-split-overhead-breakdown.pdf` |
 
-Host-local views are under `figures/<system>/`; `multi-host-summary.json` indexes the outputs. Missing or invalid measurements are omitted with warnings, never replaced with zeros or paper runtime values. The bug-study figure uses the paper's fixed classification percentages, not fresh runtime measurements. `application-trend-ratios.pdf` is supplemental.
+Host-local views are under `figures/<system>/`; `multi-host-summary.json` indexes the outputs. The bug-study figure uses the paper's fixed classification percentages, not fresh runtime measurements. `application-trend-ratios.pdf` is supplemental.
 
 Reference outcomes remain explicit: case 1375 has a shared reference finding, and case 1861404 has partial reference visibility. Neither establishes reference correctness. See the [detailed evaluation guide](evaluation/README.md) for classifications and evidence contracts.
 
