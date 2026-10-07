@@ -4,8 +4,8 @@ This repository provides the evaluation artifact for *Veritas: Semantic Validati
 
 ## Requirements
 
-- Docker on **two physical Linux hosts: x86-64 and AArch64**. Each host records its own native oracles; the emulator under test never generates its own correctness oracle.
-- Native collection requires privileged debugger/perf access and supported recording hardware. x86-64 RR application capture requires a compatible PMU; native AArch64 recording requires an RR-supported processor, such as Arm Neoverse.
+- Docker on **two physical Linux hosts: x86-64 and AArch64**. Each host records its own native oracles. The emulator under test never generates its own correctness oracle.
+- Native collection requires privileged debugger/perf access and supported recording hardware. x86-64 RR application capture requires a compatible PMU. Native AArch64 recording requires an RR-supported processor, such as Arm Neoverse.
 - Approximately **5 GB of image downloads per host**, plus space for unpacked images and generated results.
 - Allow several hours for a complete campaign.
 
@@ -21,7 +21,7 @@ docker pull "$IMAGE"
 mkdir -p runs
 ```
 
-Docker selects the matching architecture. The image contains the runtime dependencies; Nix is not required. Commands can be inspected with, for example:
+Docker selects the matching architecture. The image contains the runtime dependencies. Nix is not required. Commands can be inspected with, for example:
 
 ```bash
 docker run --rm "$IMAGE" evaluate-native --help
@@ -29,7 +29,7 @@ docker run --rm "$IMAGE" evaluate-native --help
 
 ## Smoke test
 
-On x86-64, capture case 1372; on AArch64, use case 2248 instead:
+On x86-64, capture case 1372. On AArch64, use case 2248 instead:
 
 ```bash
 docker run --rm --privileged --security-opt seccomp=unconfined \
@@ -37,7 +37,7 @@ docker run --rm --privileged --security-opt seccomp=unconfined \
   evaluate-native --output /artifacts/smoke --case 1372
 ```
 
-Transfer the results to the opposite host. On AArch64, validate 1372; on x86-64, replace `evaluate-qemu-1372` with `evaluate-qemu-2248`:
+Transfer the results to the opposite host. On AArch64, validate 1372. On x86-64, replace `evaluate-qemu-1372` with `evaluate-qemu-2248`:
 
 ```bash
 docker run --rm -v "$PWD/runs:/artifacts" "$IMAGE" \
@@ -103,7 +103,7 @@ The five paper figures are written under `figures/`:
 | Reproducer size | `reproducer-code-size.pdf` |
 | Application overhead | `realworld-split-overhead-breakdown.pdf` |
 
-Host-local views are under `figures/<system>/`; `multi-host-summary.json` indexes the outputs. The bug-study figure uses the paper's fixed classification percentages, not fresh runtime measurements. `application-trend-ratios.pdf` is supplemental.
+Host-local views are under `figures/<system>/`. `multi-host-summary.json` indexes the outputs. The bug-study figure uses the paper's fixed classification percentages, not fresh runtime measurements. `application-trend-ratios.pdf` is supplemental.
 
 Reference outcomes remain explicit: case 1375 has a shared reference finding, and case 1861404 has partial reference visibility. Neither establishes reference correctness. See the [detailed evaluation guide](evaluation/README.md) for classifications and evidence contracts.
 
@@ -115,4 +115,4 @@ Reference outcomes remain explicit: case 1375 has a shared reference finding, an
 
 ## License
 
-BSD 3-Clause; see [LICENSE](LICENSE). Bundled components retain their upstream licenses.
+BSD 3-Clause. See [LICENSE](LICENSE). Bundled components retain their upstream licenses.
