@@ -91,7 +91,7 @@ docker run --rm -v "$PWD/runs:/artifacts" "$IMAGE" \
 
 ## Expected outputs
 
-`runs/evaluation-001/` contains native oracles, validation reports, logs, profiles, metadata, and reproducers. Artifact hashes bind the evidence to its inputs. A successful historical-bug evaluation means the expected error was detected and localized—not that the mistranslated execution was accepted.
+`runs/evaluation-001/` contains native oracles, validation reports, logs, profiles, metadata, and reproducers. Successful bug evaluations detect and localize the expected error.
 
 The five paper figures are written under `figures/`:
 
@@ -103,7 +103,7 @@ The five paper figures are written under `figures/`:
 | Reproducer size | `reproducer-code-size.pdf` |
 | Application overhead | `realworld-split-overhead-breakdown.pdf` |
 
-Host-local views are under `figures/<system>/`. `multi-host-summary.json` indexes the outputs. The bug-study figure uses the paper's fixed classification percentages, not fresh runtime measurements. `application-trend-ratios.pdf` is supplemental.
+Host-local views are under `figures/<system>/`. `multi-host-summary.json` indexes the outputs. The bug-study figure uses the paper's classification percentages. `application-trend-ratios.pdf` is supplemental.
 
 Reference outcomes remain explicit: case 1375 has a shared reference finding, and case 1861404 has partial reference visibility. Neither establishes reference correctness. See the [detailed evaluation guide](evaluation/README.md) for classifications and evidence contracts.
 
