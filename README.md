@@ -1,6 +1,6 @@
 # Focaccia evaluation artifact
 
-This repository provides the evaluation artifact for *Veritas: Semantic Validation for CPU Emulators*: the 17 historical mistranslation cases, SQLite/Curl/Lua workloads, pinned emulators, reproducer generation, and paper plotting tools. [Focaccia](https://github.com/TUM-DSE/focaccia) provides tracing and semantic validation.
+This repository provides the evaluation artifact for *Focaccia: Semantic Validation for CPU Emulators*: the 17 historical mistranslation cases, SQLite/Curl/Lua workloads, pinned emulators, reproducer generation, and paper plotting tools. [Focaccia](https://github.com/TUM-DSE/focaccia) provides tracing and semantic validation.
 
 ## Requirements
 
