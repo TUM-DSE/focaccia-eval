@@ -83,7 +83,8 @@ class PaperFigureVisualContractTests(unittest.TestCase):
             plots.plot_trigger_overhead(self.complete_trigger_data(), Path("unused"))
         figure = save.call_args.args[0]
         self.assertEqual(tuple(figure.get_size_inches()), (7.0, 1.5))
-        self.assertEqual(plt.rcParams["font.family"], ["Times New Roman"])
+        self.assertEqual(plt.rcParams["font.family"], [plots.paper_font_family()])
+        self.assertIn(plots.paper_font_family(), plots.PAPER_FONTS)
         self.assertEqual(len(figure.axes), 10)
         self.assertEqual(
             [

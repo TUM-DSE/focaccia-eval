@@ -1,13 +1,29 @@
 { pkgs }:
 
 let
-  python = pkgs.python3.withPackages (pythonPackages: [
-    pythonPackages.matplotlib
-    pythonPackages.numpy
-    pythonPackages.seaborn
-  ]);
+  # Fonts for the figures. plots.py picks the font family itself. Liberation
+  # Serif has the same metrics as Times New Roman.
+  fontPackages = [ pkgs.liberation_ttf ];
   fontsConf = pkgs.makeFontsConf {
-    fontDirectories = [ pkgs.libertine ];
+    fontDirectories = fontPackages;
+  };
+  # matplotlib only finds fontconfig fonts through fc-list, so every use of
+  # this Python sees the same fonts, whatever PATH the caller has.
+  python = pkgs.python3.buildEnv.override {
+    extraLibs = with pkgs.python3.pkgs; [
+      matplotlib
+      numpy
+      seaborn
+    ];
+    makeWrapperArgs = [
+      "--set-default"
+      "FONTCONFIG_FILE"
+      "${fontsConf}"
+      "--suffix"
+      "PATH"
+      ":"
+      "${pkgs.lib.getBin pkgs.fontconfig}/bin"
+    ];
   };
   x86PlotGuestCompiler = pkgs.pkgsCross.gnu64.stdenv.cc;
   x86PlotGuest = pkgs.runCommand "focaccia-plot-full-curl-guest" { } ''
@@ -37,13 +53,25 @@ let
       mkdir empty
       PATH=/nonexistent ${runner}/bin/plot-evaluation --input empty --output figures
       pdffonts figures/combined-bug-study.pdf > fonts.txt
-      python - <<'PY'
+      # The PDF must only embed the font family plots.py asked for, so a silent
+      # fallback to another font fails here.
+      PYTHONPATH=${../evaluation} python - <<'PY'
       from pathlib import Path
 
+      from matplotlib import font_manager
+      from matplotlib.ft2font import FT2Font
+
+      import plots
+
+      family = plots.paper_font_family()
+      expected = {
+          FT2Font(font.fname).postscript_name
+          for font in font_manager.fontManager.ttflist
+          if font.name == family
+      }
       font_rows = Path("fonts.txt").read_text().splitlines()[2:]
-      font_names = [row.split()[0] for row in font_rows if row.strip()]
-      assert any("LinLibertine" in name for name in font_names), font_names
-      assert not any("DejaVu" in name for name in font_names), font_names
+      embedded = {row.split()[0].split("+")[-1] for row in font_rows if row.strip()}
+      assert embedded and embedded <= expected, (family, embedded, expected)
       PY
       mkdir "$out"
       cp fonts.txt figures/combined-bug-study.pdf "$out/"
@@ -250,11 +278,6 @@ let
       ''
         export HOME="$TMPDIR"
         export MPLBACKEND=Agg
-        ${python}/bin/python - <<'PY'
-        from matplotlib import font_manager
-
-        font_manager.findfont("Linux Libertine O", fallback_to_default=False)
-        PY
         cp -R ${../evaluation/fixtures/plots} fixture
         chmod -R u+w fixture
         ${python}/bin/python \
@@ -310,6 +333,7 @@ in
     applicationTrendRatiosCheck
     paperFigureVisualContractCheck
     fontsConf
+    fontPackages
     fontDiscoveryCheck
     fatalDiagnosticEligibilityCheck
     package
