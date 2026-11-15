@@ -664,6 +664,7 @@ let
       x86ReproducerCompiler
     ];
     fontsConf = plotFontsConf;
+    inherit (plotOutputs) fontPackages;
     commandPackages = artifactCommandPackages;
     commandNames = artifactCommandNames;
   };
@@ -1188,16 +1189,13 @@ in
     };
 
   devShells.default = pkgs.mkShell {
-    FONTCONFIG_FILE = pkgs.makeFontsConf {
-      fontDirectories = [ pkgs.libertine ];
-    };
+    FONTCONFIG_FILE = plotFontsConf;
     packages = [
       focaccia.packages.${system}.focaccia
       focaccia.packages.${system}.rr
       pkgs.binutils
       pkgs.jq
       pkgs.fontconfig
-      pkgs.libertine
       pkgs.ruff
       plotPython
     ];

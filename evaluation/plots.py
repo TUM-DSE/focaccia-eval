@@ -24,6 +24,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from matplotlib import font_manager
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import ConnectionPatch, Patch
 from matplotlib.ticker import MultipleLocator
@@ -290,10 +291,25 @@ def load_reproducer_sizes(path: Path | None) -> dict[str, tuple[float, float]]:
     return sizes
 
 
+# Fonts for the paper figures, in order of preference. Liberation Serif has
+# the same metrics as Times New Roman, so the layout stays the same.
+PAPER_FONTS = ("Times New Roman", "Liberation Serif")
+
+
+def paper_font_family() -> str:
+    for family in PAPER_FONTS:
+        try:
+            font_manager.findfont(family, fallback_to_default=False)
+        except ValueError:
+            continue
+        return family
+    raise RuntimeError(f"none of these fonts is installed: {', '.join(PAPER_FONTS)}")
+
+
 def _configure_matplotlib() -> None:
     plt.rcParams.update(
         {
-            "font.family": "Times New Roman",
+            "font.family": paper_font_family(),
             "font.size": 9,
             "axes.titlesize": 9,
             "axes.labelsize": 9,

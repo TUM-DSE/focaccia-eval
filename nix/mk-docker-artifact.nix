@@ -6,6 +6,7 @@
   focaccia,
   system,
   fontsConf,
+  fontPackages,
   commandPackages,
   commandNames,
 }:
@@ -21,8 +22,8 @@ let
     pkgs.gnugrep
     pkgs.gnused
     pkgs.jq
-    pkgs.libertine
-  ];
+  ]
+  ++ fontPackages;
   environment = pkgs.buildEnv {
     name = "focaccia-artifact-environment";
     paths = commandPackages ++ stablePackages;
@@ -171,8 +172,10 @@ let
         export MPLCONFIGDIR="$TMPDIR/matplotlib"
         mkdir -p "$MPLCONFIGDIR"
         test -d ${environment}/share/fonts
-        fc-match --format '%{family}\n' 'Linux Libertine O' \
-          | grep -F 'Linux Libertine O'
+        fonts="$(fc-list --format '%{file}\n')"
+        for font in ${lib.escapeShellArgs fontPackages}; do
+          grep -qF "$font/" <<<"$fonts"
+        done
         for command in ${lib.escapeShellArgs commandNames}; do
           test -x "${environment}/bin/$command"
           "$command" --help >"$command-help.txt"
