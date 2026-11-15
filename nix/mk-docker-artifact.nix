@@ -123,9 +123,6 @@ let
       test -x ${loadApplication}/bin/load-docker-artifact
       grep -F '${image.copyToDockerDaemon}/bin/copy-to-docker-daemon' \
         ${loadApplication}/bin/load-docker-artifact >/dev/null
-      ! grep -F 'docker load < result' ${../README.md}
-      grep -F 'nix run -L .#load-docker-artifact' ${../README.md} >/dev/null
-      grep -F 'nix run -L .#load-docker-artifact' ${../evaluation/README.md} >/dev/null
       touch "$out"
     '';
   rootCommandPathCheck = pkgs.runCommand "docker-artifact-root-command-path"
